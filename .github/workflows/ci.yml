@@ -1,0 +1,72 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  go:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        go-version: ['1.26', '1.27']
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go-version }}
+      - name: gofmt
+        run: |
+          diff=$(gofmt -l .)
+          if [ -n "$diff" ]; then
+            echo "gofmt diff:"
+            echo "$diff"
+            exit 1
+          fi
+          git diff --check
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test ./...
+      - name: race
+        run: go test -race ./...
+      - name: lint
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.13
+          args: ./...
+      - name: vulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.1.4
+          govulncheck ./...
+
+  pi:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27'
+      - name: build
+        run: ./scripts/build.sh
+      - name: bun test (Pi adapter)
+        working-directory: adapters/pi
+        run: bun test
+      - name: typecheck pi adapter
+        working-directory: adapters/pi
+        run: bunx tsc --noEmit --skipLibCheck extension.ts || npx tsc --noEmit --skipLibCheck extension.ts
+
+  benchmark:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.27'
+      - name: build
+        run: ./scripts/build.sh
+      - name: benchmark
+        run: ./scripts/benchmark.sh
+      - name: binary size
+        run: wc -c build/agent-command-guard
