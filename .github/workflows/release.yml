@@ -1,0 +1,159 @@
+name: release
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v6
+        with:
+          go-version: "1.27"
+      - uses: oven-sh/setup-bun@v2
+
+      - name: build binary
+        run: ./scripts/build.sh
+
+      - name: binary size
+        run: wc -c build/agent-command-guard
+
+      - name: test
+        run: go test ./...
+
+      - name: prepare package tarball (bootstrap-compatible)
+        run: |
+          set -euo pipefail
+          TAG="${GITHUB_REF#refs/tags/}"
+          VER="${TAG#v}"
+          echo "Preparing release for $TAG (version $VER)"
+          rm -rf package
+          mkdir -p package/dist
+          mkdir -p package/adapters/pi
+          cp build/agent-command-guard package/agent-command-guard
+          chmod +x package/agent-command-guard
+          cp adapters/pi/extension.ts package/adapters/pi/extension.ts
+          cp adapters/pi/package.json package/adapters/pi/package.json
+          cat > package/package.json <<JSON
+          {
+            "name": "agent-command-guard",
+            "version": "${VER}",
+            "type": "module",
+            "description": "Agent Command Guard — bootstrap package",
+            "dependencies": {}
+          }
+          JSON
+          cat > package/dist/install-cli.js <<'JS'
+          #!/usr/bin/env bun
+          import { existsSync, readFileSync, writeFileSync, mkdirSync, copyFileSync, chmodSync, renameSync, unlinkSync } from "node:fs";
+          import { homedir } from "node:os";
+          import { join, dirname } from "node:path";
+          function readJson(p) { try { return JSON.parse(readFileSync(p, "utf8")); } catch { return {}; } }
+          function writeJsonAtomicSync(p, data) {
+            mkdirSync(dirname(p), { recursive: true });
+            const next = JSON.stringify(data, null, 2) + "\n";
+            try {
+              if (existsSync(p) && readFileSync(p, "utf8") === next) { console.log(`Unchanged ${p}`); return; }
+              if (existsSync(p)) { const bak = `${p}.bak.${Date.now()}`; try { writeFileSync(bak, readFileSync(p)); } catch {} }
+            } catch {}
+            const tmp = `${p}.tmp.${process.pid}`;
+            writeFileSync(tmp, next, "utf8");
+            try { renameSync(tmp, p); } catch { writeFileSync(p, next, "utf8"); try { unlinkSync(tmp); } catch {} }
+            console.log(`Configured ${p}`);
+          }
+          function parseArgs(argv) {
+            const out = { codex: false, cursor: false, pi: false, prefix: join(homedir(), ".agent-command-guard/install") };
+            for (let i = 0; i < argv.length; i++) {
+              const a = argv[i];
+              if (a === "--codex") out.codex = true;
+              else if (a === "--cursor") out.cursor = true;
+              else if (a === "--pi") out.pi = true;
+              else if (a === "--prefix") { out.prefix = argv[i+1] || out.prefix; i++; }
+              else if (a.startsWith("--prefix=")) out.prefix = a.slice("--prefix=".length);
+              else if (a === "--wire-only" || a === "--local-build") {}
+              else if (a === "--version") { i++; }
+            }
+            if (!out.codex && !out.cursor && !out.pi) { out.codex = out.cursor = out.pi = true; }
+            return out;
+          }
+          function installCanonical(prefix) {
+            const src = join(prefix, "agent-command-guard");
+            const destDir = join(homedir(), ".agent-command-guard");
+            const dest = join(destDir, "agent-command-guard");
+            mkdirSync(destDir, { recursive: true });
+            if (existsSync(src)) { copyFileSync(src, dest); chmodSync(dest, 0o755); console.log(`Installed hook: ${dest}`); return dest; }
+            const cand = [join(prefix, "package/agent-command-guard"), join(prefix, "build/agent-command-guard")];
+            for (const c of cand) if (existsSync(c)) { copyFileSync(c, dest); chmodSync(dest, 0o755); console.log(`Installed hook: ${dest}`); return dest; }
+            console.error(`install-cli: bundled binary not found in ${prefix}`); process.exit(1);
+          }
+          function wireCodex(installed) {
+            const p = join(homedir(), ".codex/hooks.json");
+            const data = readJson(p);
+            const hooks = (data.hooks && typeof data.hooks === "object") ? data.hooks : (data.hooks = {});
+            let lst = Array.isArray(hooks.PreToolUse) ? hooks.PreToolUse : [];
+            lst = lst.filter(e => { const hs = e?.hooks; if (!Array.isArray(hs)) return true; return !hs.some(h => typeof h?.command === "string" && h.command.includes("agent-command-guard")); });
+            lst.push({ matcher: "*", hooks: [{ type: "command", command: installed, timeout: 5, statusMessage: "Checking shell command policy" }] });
+            hooks.PreToolUse = lst;
+            writeJsonAtomicSync(p, data);
+          }
+          function wireCursor(installed) {
+            const p = join(homedir(), ".cursor/hooks.json");
+            const data = readJson(p);
+            if (!("version" in data)) data.version = 1;
+            const hooks = (data.hooks && typeof data.hooks === "object") ? data.hooks : (data.hooks = {});
+            const entry = { command: installed, failClosed: true };
+            for (const key of ["beforeShellExecution", "preToolUse", "beforeReadFile", "beforeTabFileRead"]) {
+              let lst = Array.isArray(hooks[key]) ? hooks[key] : [];
+              lst = lst.filter(e => !(typeof e?.command === "string" && e.command.includes("agent-command-guard")));
+              lst.push(entry);
+              hooks[key] = lst;
+            }
+            writeJsonAtomicSync(p, data);
+          }
+          function installPi(prefix) {
+            const piDir = join(homedir(), ".agent-command-guard/pi");
+            mkdirSync(piDir, { recursive: true });
+            const srcExt = join(prefix, "adapters/pi/extension.ts");
+            const srcPkg = join(prefix, "adapters/pi/package.json");
+            if (existsSync(srcExt)) copyFileSync(srcExt, join(piDir, "extension.ts"));
+            if (existsSync(srcPkg)) copyFileSync(srcPkg, join(piDir, "package.json"));
+            console.log(`Installed Pi adapter: ${piDir}`);
+            const settingsPath = join(homedir(), ".pi/agent/settings.json");
+            const data = readJson(settingsPath);
+            let pkgs = Array.isArray(data.packages) ? data.packages : [];
+            pkgs = pkgs.filter(s => typeof s !== "string" || (!s.includes("agent-command-guard") || s === piDir));
+            if (!pkgs.includes(piDir)) pkgs.push(piDir);
+            data.packages = [...new Set(pkgs)];
+            writeJsonAtomicSync(settingsPath, data);
+          }
+          const args = parseArgs(process.argv.slice(2));
+          const installed = installCanonical(args.prefix);
+          if (args.codex) wireCodex(installed);
+          if (args.cursor) wireCursor(installed);
+          if (args.pi) installPi(args.prefix);
+          console.log(`\nVerify: printf '{"tool_name":"Bash","tool_input":{"command":"true"}}' | ${installed}; echo $?`);
+          JS
+          chmod +x package/dist/install-cli.js
+          cp install.sh package/install.sh || true
+          cp README.md package/README.md || true
+          TAR="agent-command-guard-${VER}.tgz"
+          tar -czf "${TAR}" package
+          echo "Created ${TAR}:"
+          ls -lh "${TAR}"
+          tar -tzf "${TAR}" | head -n 50
+          sha256sum "${TAR}" 2>/dev/null || shasum -a 256 "${TAR}"
+          cp build/agent-command-guard "agent-command-guard-${VER}-darwin-arm64"
+          ls -lh agent-command-guard-*
+
+      - name: create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            agent-command-guard-*.tgz
+            agent-command-guard-*-darwin-arm64
+          generate_release_notes: true
+          fail_on_unmatched_files: false
