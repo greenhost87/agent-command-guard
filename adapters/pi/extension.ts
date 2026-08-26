@@ -46,10 +46,10 @@ function inspectCommand(command: string, hookPath: string, cwd: string): Promise
 		child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
 		child.stderr.on("data", (chunk: Buffer) => stderr.push(chunk));
 		child.stdin.on("error", () => {});
-		child.on("error", (error) => {
+		child.on("error", (error: Error) => {
 			launchError = error;
 		});
-		child.on("close", (code) => {
+		child.on("close", (code: number | null) => {
 			if (launchError) {
 				resolve(`Protective hook failed: ${launchError.message}`);
 				return;

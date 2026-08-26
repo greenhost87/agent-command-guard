@@ -58,7 +58,7 @@ jobs:
         run: bun test
       - name: typecheck pi adapter
         working-directory: adapters/pi
-        run: bunx tsc --noEmit --skipLibCheck extension.ts || npx tsc --noEmit --skipLibCheck extension.ts
+        run: bunx tsc --noEmit
 
   benchmark:
     runs-on: macos-latest
