@@ -639,10 +639,6 @@ func isInstallConfirmationSupported() bool {
 // substitution scanner and the block-reason scan on deeply nested input.
 const maxSubstitutionDepth = 32
 
-func detectCommandSubstitutionReasonAtDepth(commandText string, installApproved bool, substDepth int) string {
-	return detectCommandSubstitutionReasonAtDepthInCwd(commandText, installApproved, substDepth, "")
-}
-
 func detectCommandSubstitutionReasonAtDepthInCwd(commandText string, installApproved bool, substDepth int, cwd string) string {
 	if substDepth > maxSubstitutionDepth {
 		return ""
@@ -761,10 +757,6 @@ func detectCommandSubstitutionReasonAtDepthInCwd(commandText string, installAppr
 		}
 	}
 	return ""
-}
-
-func detectDestructiveDeletion(commandText string, tokens []shellToken, spans []commandSpan) string {
-	return detectDestructiveDeletionInCwd(commandText, tokens, spans, "")
 }
 
 func detectDestructiveDeletionInCwd(commandText string, tokens []shellToken, spans []commandSpan, cwd string) string {
@@ -1050,10 +1042,6 @@ func detectBlockReasonWithInstallApproval(commandText string, installApproved bo
 
 func detectBlockReasonWithInstallApprovalInCwd(commandText string, installApproved bool, cwd string) string {
 	return detectBlockReasonAtDepthInCwd(commandText, installApproved, 0, cwd)
-}
-
-func detectBlockReasonAtDepth(commandText string, installApproved bool, substDepth int) string {
-	return detectBlockReasonAtDepthInCwd(commandText, installApproved, substDepth, "")
 }
 
 func detectBlockReasonAtDepthInCwd(commandText string, installApproved bool, substDepth int, cwd string) string {
