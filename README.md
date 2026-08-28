@@ -1,5 +1,7 @@
 # Agent Command Guard
 
+[![CI](https://github.com/greenhost87/agent-command-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/greenhost87/agent-command-guard/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/greenhost87/agent-command-guard)](https://github.com/greenhost87/agent-command-guard/releases) [![License: MIT](https://img.shields.io/github/license/greenhost87/agent-command-guard)](LICENSE) ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/greenhost87/agent-command-guard?utm_source=oss&utm_medium=github&utm_campaign=greenhost87%2Fagent-command-guard&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+
 Opinionated command-policy guard for coding agents — **Codex**, **Cursor**, **Pi**. Inspects shell commands before execution, blocks risky patterns. Heuristic guard, not a sandbox.
 
 ## Requirements
