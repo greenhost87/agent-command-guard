@@ -25,7 +25,14 @@ export async function loadPiAdapter(
 	options?: { cwdPrefix?: string },
 ): Promise<LoadedPiAdapter> {
 	process.env.PI_OFFLINE = "1";
-	const root = await mkdtemp(join(tmpdir(), options?.cwdPrefix ?? "acg-pi-"));
+	let root: string;
+	if (options?.cwdPrefix === "agent-quality-gate-") {
+		const parent = await mkdtemp(join(tmpdir(), "acg-"));
+		root = join(parent, "agent-quality-gate");
+		await mkdir(root, { recursive: true });
+	} else {
+		root = await mkdtemp(join(tmpdir(), options?.cwdPrefix ?? "acg-pi-"));
+	}
 	const agentDir = join(root, "agent");
 	await mkdir(agentDir, { recursive: true });
 	const settingsManager = SettingsManager.inMemory();
