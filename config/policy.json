@@ -1,0 +1,27 @@
+{
+  "separators": ["|", "||", "&&", ";", "&", "\n"],
+  "shell_keywords": ["if", "then", "elif", "else", "fi", "while", "until", "do", "done", "for", "in", "case", "esac", "function", "{", "}"],
+  "wrappers": ["command", "builtin", "exec", "time", "noglob", "rtk", "sudo", "doas"],
+  "shell_tool_names": ["Bash", "Shell", "exec_command", "functions.exec_command", "shell_command", "functions.shell_command"],
+  "patch_tool_names": ["apply_patch", "Edit", "Write"],
+  "remote_commands": ["ssh", "scp", "sftp", "rsync", "ftp", "lftp"],
+  "interpreters": {
+    "pipe": ["bun", "julia", "lua", "luajit", "osascript", "perl", "php", "R", "Rscript", "ruby", "swift"],
+    "node": ["node", "nodejs"],
+    "python_prefixes": ["python", "pythonw", "pypy"],
+    "shell": ["sh", "bash", "zsh"]
+  },
+  "messages": {
+    "script_dir": ".codex/tmp-scripts",
+    "script_guidance": "If temporary code is needed, create a readable script under `.codex/tmp-scripts/` in the current project/workspace, run it as a file, and leave it in place for audit.",
+    "transcripts_marker": "agent-transcripts",
+    "transcripts_reason": "Blocked access to agent-transcripts.",
+    "quality_gate_marker": "/.agent-quality-gate",
+    "quality_gate_token": "agent-quality-gate",
+    "quality_gate_reason": "Blocked access to ~/.agent-quality-gate/ outside the agent-quality-gate project.",
+    "interactive_reason_prefix": "Blocked interactive interpreter session. PTY input bypasses PreToolUse inspection. ",
+    "protected_reason": "Blocked modification of the agent-command-guard policy configuration. Enforcement policy must stay under explicit review; edit this file manually outside agent tools if needed."
+  },
+  "protected_paths": ["config/policy.json"],
+  "scan_triggers": ["|", "<<", "-c", "-e", "-p", "-r", "-lc", "--eval", "--print", ".codex", "/sh", " sh", "rscript", "ruby", "rm ", "rmdir", "rtk", "rsync", "bash", "bun", "cp ", "deno", "eval", "find", "ftp", "git", "julia", "lua", "lftp", "mv ", "node", "nodejs", "osascript", "perl", "php", "policy.json", "config/policy.json", "pypy", "python", "pythonw", "scp", "ssh", "swift", "sftp", "tee", "tmp-scripts", "trash", "trash-put", "unlink", "xargs", "zsh", "`", "$("]
+}

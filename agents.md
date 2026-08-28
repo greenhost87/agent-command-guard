@@ -54,3 +54,16 @@ Changes to `adapters/pi/extension.ts` follow this sequence:
 
 1. Run `bun --cwd adapters/pi test`
 2. Run `./scripts/benchmark-pi.sh`
+
+## Releases
+
+- `main` — tracks the latest released baseline (`v1.0.0`).
+- `release/v1.1.0` — next release branch; policy tables moved to embedded `config/policy.json` with `ACG_POLICY_CONFIG` overlay merge, production-path policy benches, and README allow/deny vs install-confirmation docs. Experiment notes in `docs/config-extraction-experiments.md`.
+
+Work on 1.1.0 from the release branch:
+
+```sh
+git checkout release/v1.1.0
+```
+
+Merge to `main` and push tag `v1.1.0` when the release is ready (`.github/workflows/release.yml` builds on `v*` tags).
