@@ -4,31 +4,31 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 )
 
-const scriptDir = ".codex/tmp-scripts"
+// scriptDir, scriptGuidance and all marker/reason strings below are
+// populated at startup from config/policy.json (see policy.go).
+var (
+	scriptDir                string
+	scriptGuidance           string
+	inlineInterpreterReason  string
+	stdinInterpreterReason   string
+	interactiveInterpreterRe string
+	agentTranscriptsMarker   string
+	agentTranscriptsReason   string
+	agentQualityGateMarker   string
+	agentQualityGateCwdToken string
+	agentQualityGateReason   string
+	protectedConfigReason    string
 
-const scriptGuidance = "If temporary code is needed, create a readable script under `.codex/tmp-scripts/` in the current project/workspace, run it as a file, and leave it in place for audit."
-
-const inlineInterpreterReason = "Blocked inline interpreter code. " + scriptGuidance
-
-const stdinInterpreterReason = "Blocked interpreter code from stdin/heredoc. " + scriptGuidance
-
-const interactiveInterpreterReason = "Blocked interactive interpreter session. PTY input bypasses PreToolUse inspection. " + scriptGuidance
-
-const agentTranscriptsMarker = "agent-transcripts"
-
-const agentTranscriptsReason = "Blocked access to agent-transcripts."
-
-const agentQualityGateMarker = "/.agent-quality-gate"
-
-const agentQualityGateCwdToken = "agent-quality-gate"
-
-const agentQualityGateReason = "Blocked access to ~/.agent-quality-gate/ outside the agent-quality-gate project."
+	protectedCwdToken = "agent-command-guard"
+)
 
 type commandSpan struct {
 	name       string
@@ -64,52 +64,57 @@ func commandNameToken(token string) string {
 	return strings.ToLower(basenameToken(token))
 }
 
-func isSeparator(token string) bool {
-	switch token {
-	case "|", "||", "&&", ";", "&", "\n":
-		return true
-	default:
+func cwdAllowsProtectedConfig(cwd string) bool {
+	return cwdMatchesProjectRoot(cwd, protectedCwdToken)
+}
+
+func cwdMatchesProjectRoot(cwd, rootName string) bool {
+	if cwd == "" || !filepath.IsAbs(cwd) {
 		return false
 	}
+	return filepath.Base(filepath.Clean(cwd)) == rootName
+}
+
+func touchesProtectedPath(token string) bool {
+	normalizedToken := path.Clean(strings.ReplaceAll(token, `\`, "/"))
+	for _, protected := range policy.protectedPaths {
+		normalizedProtected := path.Clean(strings.ReplaceAll(protected, `\`, "/"))
+		if strings.Contains(normalizedToken, normalizedProtected) ||
+			strings.Contains(normalizedToken, "/"+normalizedProtected) ||
+			strings.Contains(normalizedToken, "./"+normalizedProtected) {
+			return true
+		}
+	}
+	return false
+}
+
+func anyTouchesProtectedPath(commandText string, args []shellToken) bool {
+	for _, arg := range args {
+		if touchesProtectedPath(arg.value(commandText)) {
+			return true
+		}
+	}
+	return false
+}
+
+func isSeparator(token string) bool {
+	return policy.separators.has(token)
 }
 
 func isShellKeyword(token string) bool {
-	switch token {
-	case "if", "then", "elif", "else", "fi",
-		"while", "until", "do", "done", "for",
-		"in", "case", "esac", "function", "{", "}":
-		return true
-	default:
-		return false
-	}
+	return policy.keywords.has(token)
 }
 
 func isWrapper(name string) bool {
-	switch name {
-	case "command", "builtin", "exec", "time", "noglob", "rtk", "sudo", "doas":
-		return true
-	default:
-		return false
-	}
+	return policy.wrappers.has(name)
 }
 
 func isShellToolName(name string) bool {
-	switch name {
-	case "Bash", "Shell", "exec_command", "functions.exec_command",
-		"shell_command", "functions.shell_command":
-		return true
-	default:
-		return false
-	}
+	return policy.shellTools.has(name)
 }
 
 func isPatchToolName(name string) bool {
-	switch name {
-	case "apply_patch", "Edit", "Write":
-		return true
-	default:
-		return false
-	}
+	return policy.patchTools.has(name)
 }
 
 func isASCIIAlpha(r byte) bool {
@@ -148,26 +153,29 @@ func isVersionedInterpreterName(name, prefix string) bool {
 }
 
 func isPythonInterpreter(name string) bool {
-	return isVersionedInterpreterName(name, "python") ||
-		isVersionedInterpreterName(name, "pythonw") ||
-		isVersionedInterpreterName(name, "pypy")
+	for _, prefix := range policy.pythonPrefixes {
+		if isVersionedInterpreterName(name, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func isNodeInterpreter(name string) bool {
-	return name == "node" || name == "nodejs"
+	return policy.node.has(name)
 }
 
 func isShellInterpreter(name string) bool {
-	return name == "sh" || name == "bash" || name == "zsh"
+	return policy.shell.has(name)
 }
 
 func isPipeInterpreter(name string) bool {
-	switch name {
-	case "bun", "julia", "lua", "luajit", "osascript", "perl", "php", "R", "Rscript", "ruby", "swift":
-		return true
-	default:
-		return isShellInterpreter(name) || isNodeInterpreter(name) || isPythonInterpreter(name)
-	}
+	return policy.pipe.has(name) || isNodeInterpreter(name) ||
+		isShellInterpreter(name) || isPythonInterpreter(name)
+}
+
+func isRemoteCommand(name string) bool {
+	return policy.remote.has(name)
 }
 
 func isASCIISpace(character byte) bool {
@@ -620,15 +628,6 @@ func touchesExternalPath(token string) bool {
 	return false
 }
 
-func isRemoteCommand(name string) bool {
-	switch name {
-	case "ssh", "scp", "sftp", "rsync", "ftp", "lftp":
-		return true
-	default:
-		return false
-	}
-}
-
 func isInstallConfirmationSupported() bool {
 	if runtime.GOOS != "darwin" {
 		return false
@@ -643,7 +642,7 @@ func isInstallConfirmationSupported() bool {
 // substitution scanner and the block-reason scan on deeply nested input.
 const maxSubstitutionDepth = 32
 
-func detectCommandSubstitutionReasonAtDepth(commandText string, installApproved bool, substDepth int) string {
+func detectCommandSubstitutionReasonAtDepthInCwd(commandText string, installApproved bool, substDepth int, cwd string) string {
 	if substDepth > maxSubstitutionDepth {
 		return ""
 	}
@@ -706,7 +705,7 @@ func detectCommandSubstitutionReasonAtDepth(commandText string, installApproved 
 				continue
 			}
 			inner := commandText[i+1 : end]
-			if reason := detectBlockReasonAtDepth(inner, installApproved, substDepth+1); reason != "" {
+			if reason := detectBlockReasonAtDepthInCwd(inner, installApproved, substDepth+1, cwd); reason != "" {
 				return reason
 			}
 			i = end
@@ -753,7 +752,7 @@ func detectCommandSubstitutionReasonAtDepth(commandText string, installApproved 
 				continue
 			}
 			inner := commandText[i+2 : end]
-			if reason := detectBlockReasonAtDepth(inner, installApproved, substDepth+1); reason != "" {
+			if reason := detectBlockReasonAtDepthInCwd(inner, installApproved, substDepth+1, cwd); reason != "" {
 				return reason
 			}
 			i = end
@@ -763,10 +762,17 @@ func detectCommandSubstitutionReasonAtDepth(commandText string, installApproved 
 	return ""
 }
 
-func detectDestructiveDeletion(commandText string, tokens []shellToken, spans []commandSpan) string {
+func detectDestructiveDeletionInCwd(commandText string, tokens []shellToken, spans []commandSpan, cwd string) string {
 	for _, span := range spans {
 		args := tokens[span.start+1 : span.end]
 		name := span.name
+
+		if !cwdAllowsProtectedConfig(cwd) && (name == "rm" || name == "rmdir" || name == "unlink" || name == "trash" || name == "trash-put") && anyTouchesProtectedPath(commandText, args) {
+			return protectedConfigReason
+		}
+		if !cwdAllowsProtectedConfig(cwd) && (name == "mv" || name == "cp" || name == "tee") && len(args) > 0 && anyTouchesProtectedPath(commandText, args) {
+			return protectedConfigReason
+		}
 
 		if (name == "rm" || name == "rmdir" || name == "unlink" || name == "trash" || name == "trash-put") && anyTouchesScriptDir(commandText, args) {
 			return fmt.Sprintf("Blocked deletion of `%s` audit scripts. Leave generated scripts in place for review.", scriptDir)
@@ -795,6 +801,32 @@ func detectDestructiveDeletion(commandText string, tokens []shellToken, spans []
 			}
 		}
 
+		if !cwdAllowsProtectedConfig(cwd) && name == "find" {
+			loweredCmd := strings.ToLower(commandText)
+			protectedInText := false
+			for _, path := range policy.protectedPathsLower {
+				if strings.Contains(loweredCmd, path) {
+					protectedInText = true
+					break
+				}
+			}
+			if protectedInText {
+				for _, arg := range args {
+					if arg.value(commandText) == "-delete" {
+						return protectedConfigReason
+					}
+				}
+				for index := 0; index+1 < len(args); index++ {
+					if args[index].value(commandText) == "-exec" {
+						nextName := basenameToken(args[index+1].value(commandText))
+						if nextName == "rm" || nextName == "rmdir" || nextName == "unlink" {
+							return protectedConfigReason
+						}
+					}
+				}
+			}
+		}
+
 		if name == "git" && len(args) > 0 {
 			switch args[0].value(commandText) {
 			case "clean":
@@ -813,8 +845,12 @@ func detectDestructiveDeletion(commandText string, tokens []shellToken, spans []
 
 	for index := 0; index+1 < len(tokens); index++ {
 		token := tokens[index].value(commandText)
-		if (token == ">" || token == ">|" || token == "2>" || token == "&>") && touchesScriptDir(tokens[index+1].value(commandText)) {
+		target := tokens[index+1].value(commandText)
+		if touchesScriptDir(target) && (token == ">" || token == ">|" || token == "2>" || token == "&>") {
 			return fmt.Sprintf("Blocked overwriting `%s` audit scripts via shell redirection.", scriptDir)
+		}
+		if !cwdAllowsProtectedConfig(cwd) && touchesProtectedPath(target) && (token == ">" || token == ">|" || token == ">>" || token == "2>" || token == "&>") {
+			return protectedConfigReason
 		}
 	}
 	return ""
@@ -839,117 +875,22 @@ func anyTouchesExternalPath(commandText string, args []shellToken) bool {
 }
 
 func needsDetailedShellScan(commandText string) bool {
-	commandText = strings.ToLower(commandText)
-	for index := 0; index < len(commandText); index++ {
-		switch commandText[index] {
-		case '|':
+	lowered := strings.ToLower(commandText)
+	// Protected config paths bypass the trigger list — they always need a detailed scan.
+	for _, path := range policy.protectedPathsLower {
+		if strings.Contains(lowered, path) {
 			return true
-		case '<':
-			if index+1 < len(commandText) && commandText[index+1] == '<' {
-				return true
-			}
-		case '-':
-			rest := commandText[index:]
-			if strings.HasPrefix(rest, "-c") || strings.HasPrefix(rest, "-e") ||
-				strings.HasPrefix(rest, "-p") || strings.HasPrefix(rest, "-r") ||
-				strings.HasPrefix(rest, "-lc") || strings.HasPrefix(rest, "--eval") ||
-				strings.HasPrefix(rest, "--print") {
-				return true
-			}
-		case '.':
-			if strings.HasPrefix(commandText[index:], ".codex") {
-				return true
-			}
-		case '/':
-			if strings.HasPrefix(commandText[index:], "/sh") {
-				return true
-			}
-		case ' ':
-			if strings.HasPrefix(commandText[index:], " sh") {
-				return true
-			}
-		case 'r':
-			rest := commandText[index:]
-			if strings.HasPrefix(rest, "rscript") || strings.HasPrefix(rest, "ruby") || strings.HasPrefix(rest, "rm ") ||
-				strings.HasPrefix(rest, "rmdir") || strings.HasPrefix(rest, "rtk") || strings.HasPrefix(rest, "rsync") {
-				return true
-			}
-		case 'b':
-			rest := commandText[index:]
-			if strings.HasPrefix(rest, "bash") || strings.HasPrefix(rest, "bun") {
-				return true
-			}
-		case 'd':
-			if strings.HasPrefix(commandText[index:], "deno") {
-				return true
-			}
-		case 'e':
-			if strings.HasPrefix(commandText[index:], "eval") {
-				return true
-			}
-		case 'f':
-			if strings.HasPrefix(commandText[index:], "find") || strings.HasPrefix(commandText[index:], "ftp") {
-				return true
-			}
-		case 'g':
-			if strings.HasPrefix(commandText[index:], "git") {
-				return true
-			}
-		case 'j':
-			if strings.HasPrefix(commandText[index:], "julia") {
-				return true
-			}
-		case 'l':
-			if strings.HasPrefix(commandText[index:], "lua") || strings.HasPrefix(commandText[index:], "lftp") {
-				return true
-			}
-		case 'n':
-			rest := commandText[index:]
-			if strings.HasPrefix(rest, "node") || strings.HasPrefix(rest, "nodejs") {
-				return true
-			}
-		case 'o':
-			if strings.HasPrefix(commandText[index:], "osascript") {
-				return true
-			}
-		case 'p':
-			rest := commandText[index:]
-			if strings.HasPrefix(rest, "perl") || strings.HasPrefix(rest, "php") ||
-				strings.HasPrefix(rest, "pypy") || strings.HasPrefix(rest, "python") ||
-				strings.HasPrefix(rest, "pythonw") {
-				return true
-			}
-		case 's':
-			rest := commandText[index:]
-			if (index == 0 && strings.HasPrefix(rest, "sh")) || strings.HasPrefix(rest, "scp") ||
-				strings.HasPrefix(rest, "ssh") || strings.HasPrefix(rest, "swift") ||
-				strings.HasPrefix(rest, "sftp") {
-				return true
-			}
-		case 't':
-			rest := commandText[index:]
-			if strings.HasPrefix(rest, "tmp-scripts") || strings.HasPrefix(rest, "trash") ||
-				strings.HasPrefix(rest, "trash-put") {
-				return true
-			}
-		case 'u':
-			if strings.HasPrefix(commandText[index:], "unlink") {
-				return true
-			}
-		case 'x':
-			if strings.HasPrefix(commandText[index:], "xargs") {
-				return true
-			}
-		case 'z':
-			if strings.HasPrefix(commandText[index:], "zsh") {
-				return true
-			}
-		case '`':
+		}
+	}
+	// Leading `sh` matched at index 0 in the pre-config switch. A Contains("sh")
+	// trigger would also hit mid-token substrings ("push", "flush"), so keep the
+	// prefix check here instead of putting "sh" in scan_triggers.
+	if strings.HasPrefix(lowered, "sh") {
+		return true
+	}
+	for _, trigger := range policy.scanTriggers {
+		if strings.Contains(lowered, trigger) {
 			return true
-		case '$':
-			if index+1 < len(commandText) && commandText[index+1] == '(' {
-				return true
-			}
 		}
 	}
 	return false
@@ -1085,15 +1026,23 @@ func commandReceivesPipe(commandText string, tokens []shellToken, commandStart i
 }
 
 func detectBlockReason(commandText string) string {
-	return detectBlockReasonWithInstallApproval(commandText, false)
+	return detectBlockReasonInCwd(commandText, "")
+}
+
+func detectBlockReasonInCwd(commandText, cwd string) string {
+	return detectBlockReasonWithInstallApprovalInCwd(commandText, false, cwd)
 }
 
 func detectBlockReasonWithInstallApproval(commandText string, installApproved bool) string {
-	return detectBlockReasonAtDepth(commandText, installApproved, 0)
+	return detectBlockReasonWithInstallApprovalInCwd(commandText, installApproved, "")
 }
 
-func detectBlockReasonAtDepth(commandText string, installApproved bool, substDepth int) string {
-	if reason := detectCommandSubstitutionReasonAtDepth(commandText, installApproved, substDepth); reason != "" {
+func detectBlockReasonWithInstallApprovalInCwd(commandText string, installApproved bool, cwd string) string {
+	return detectBlockReasonAtDepthInCwd(commandText, installApproved, 0, cwd)
+}
+
+func detectBlockReasonAtDepthInCwd(commandText string, installApproved bool, substDepth int, cwd string) string {
+	if reason := detectCommandSubstitutionReasonAtDepthInCwd(commandText, installApproved, substDepth, cwd); reason != "" {
 		return reason
 	}
 	if !needsDetailedShellScan(commandText) {
@@ -1107,7 +1056,7 @@ func detectBlockReasonAtDepth(commandText string, installApproved bool, substDep
 	if reason := detectEnvSplitString(commandText, tokens); reason != "" {
 		return reason
 	}
-	if reason := detectDestructiveDeletion(commandText, tokens, spans); reason != "" {
+	if reason := detectDestructiveDeletionInCwd(commandText, tokens, spans, cwd); reason != "" {
 		return reason
 	}
 
@@ -1135,7 +1084,7 @@ func detectBlockReasonAtDepth(commandText string, installApproved bool, substDep
 		}
 		if !commandReceivesPipe(commandText, tokens, span.start) &&
 			startsInteractiveInterpreter(commandText, name, args) {
-			return interactiveInterpreterReason
+			return interactiveInterpreterRe
 		}
 	}
 
@@ -1173,6 +1122,12 @@ func detectBlockReasonAtDepth(commandText string, installApproved bool, substDep
 }
 
 func detectPatchDeleteReason(commandText string) string {
+	return detectPatchDeleteReasonInCwd(commandText, "")
+}
+
+func detectPatchDeleteReasonInCwd(commandText, cwd string) string {
+	allowProtected := cwdAllowsProtectedConfig(cwd)
+	addMarker := "*** " + "Add File:"
 	deleteMarker := "*** " + "Delete File:"
 	updateMarker := "*** " + "Update File:"
 	moveMarker := "*** " + "Move to:"
@@ -1191,10 +1146,22 @@ func detectPatchDeleteReason(commandText string) string {
 		case strings.HasPrefix(line, updateMarker):
 			pathText := strings.TrimSpace(strings.TrimPrefix(line, updateMarker))
 			currentUpdateTouchesScriptDir = touchesScriptDir(pathText)
+			if !allowProtected && touchesProtectedPath(pathText) {
+				return protectedConfigReason
+			}
+		case strings.HasPrefix(line, addMarker):
+			pathText := strings.TrimSpace(strings.TrimPrefix(line, addMarker))
+			if !allowProtected && touchesProtectedPath(pathText) {
+				return protectedConfigReason
+			}
+			currentUpdateTouchesScriptDir = false
 		case strings.HasPrefix(line, deleteMarker):
 			pathText := strings.TrimSpace(strings.TrimPrefix(line, deleteMarker))
 			if touchesScriptDir(pathText) {
 				return fmt.Sprintf("Blocked deletion of `%s` audit scripts. Leave generated scripts in place for review.", scriptDir)
+			}
+			if !allowProtected && touchesProtectedPath(pathText) {
+				return protectedConfigReason
 			}
 			currentUpdateTouchesScriptDir = false
 		case strings.HasPrefix(line, moveMarker):
@@ -1284,14 +1251,84 @@ func skipJSONString(data []byte, index int) (int, bool) {
 		return index, false
 	}
 	for index++; index < len(data); index++ {
-		switch data[index] {
+		character := data[index]
+		switch character {
 		case '"':
 			return index + 1, true
 		case '\\':
 			index++
+			if index >= len(data) {
+				return index, false
+			}
+			switch data[index] {
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+			case 'u':
+				if index+4 >= len(data) {
+					return len(data), false
+				}
+				for offset := 1; offset <= 4; offset++ {
+					if !isJSONHex(data[index+offset]) {
+						return index + offset, false
+					}
+				}
+				index += 4
+			default:
+				return index, false
+			}
+		default:
+			if character < 0x20 {
+				return index, false
+			}
 		}
 	}
 	return index, false
+}
+
+func isJSONHex(character byte) bool {
+	return character >= '0' && character <= '9' || character >= 'a' && character <= 'f' || character >= 'A' && character <= 'F'
+}
+
+func skipJSONNumber(data []byte, index int) (int, bool) {
+	if index < len(data) && data[index] == '-' {
+		index++
+	}
+	if index >= len(data) {
+		return index, false
+	}
+	if data[index] == '0' {
+		index++
+	} else {
+		if data[index] < '1' || data[index] > '9' {
+			return index, false
+		}
+		for index < len(data) && data[index] >= '0' && data[index] <= '9' {
+			index++
+		}
+	}
+	if index < len(data) && data[index] == '.' {
+		index++
+		start := index
+		for index < len(data) && data[index] >= '0' && data[index] <= '9' {
+			index++
+		}
+		if index == start {
+			return index, false
+		}
+	}
+	if index < len(data) && (data[index] == 'e' || data[index] == 'E') {
+		index++
+		if index < len(data) && (data[index] == '+' || data[index] == '-') {
+			index++
+		}
+		start := index
+		for index < len(data) && data[index] >= '0' && data[index] <= '9' {
+			index++
+		}
+		if index == start {
+			return index, false
+		}
+	}
+	return index, true
 }
 
 func skipJSONValue(data []byte, index int) (int, bool) {
@@ -1328,6 +1365,9 @@ func skipJSONValue(data []byte, index int) (int, bool) {
 			index = skipJSONSpace(data, index)
 			if index < len(data) && data[index] == ',' {
 				index++
+				if next := skipJSONSpace(data, index); next >= len(data) || data[next] == '}' {
+					return next, false
+				}
 				continue
 			}
 			if index < len(data) && data[index] == '}' {
@@ -1353,6 +1393,9 @@ func skipJSONValue(data []byte, index int) (int, bool) {
 			index = skipJSONSpace(data, index)
 			if index < len(data) && data[index] == ',' {
 				index++
+				if next := skipJSONSpace(data, index); next >= len(data) || data[next] == ']' {
+					return next, false
+				}
 				continue
 			}
 			if index < len(data) && data[index] == ']' {
@@ -1361,18 +1404,12 @@ func skipJSONValue(data []byte, index int) (int, bool) {
 			return index, false
 		}
 	default:
-		for index < len(data) {
-			switch data[index] {
-			case ',', '}', ']':
-				return index, true
-			default:
-				if isASCIISpace(data[index]) {
-					return index, true
-				}
-				index++
+		for _, literal := range []string{"true", "false", "null"} {
+			if strings.HasPrefix(string(data[index:]), literal) {
+				return index + len(literal), true
 			}
 		}
-		return index, true
+		return skipJSONNumber(data, index)
 	}
 }
 
@@ -1590,7 +1627,7 @@ func main() {
 		if commandText == "" {
 			return
 		}
-		reason = detectPatchDeleteReason(commandText)
+		reason = detectPatchDeleteReasonInCwd(commandText, data.Cwd)
 		if reason == "" {
 			reason = evaluateAgentQualityGateAccess(commandText, data.Cwd)
 		}
@@ -1618,7 +1655,7 @@ func touchesAgentQualityGate(text string) bool {
 }
 
 func cwdAllowsAgentQualityGate(cwd string) bool {
-	return strings.Contains(cwd, agentQualityGateCwdToken)
+	return cwdMatchesProjectRoot(cwd, agentQualityGateCwdToken)
 }
 
 func evaluateAgentQualityGateAccess(text, cwd string) string {
@@ -1652,5 +1689,5 @@ func evaluateShellCommandInCwd(commandText, cwd string) string {
 		}
 		installApproved = true
 	}
-	return detectBlockReasonWithInstallApproval(commandText, installApproved)
+	return detectBlockReasonWithInstallApprovalInCwd(commandText, installApproved, cwd)
 }

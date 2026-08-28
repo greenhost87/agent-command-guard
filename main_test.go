@@ -641,12 +641,15 @@ func TestDetectBlockReasonBlocksInteractiveInterpreters(t *testing.T) {
 		{name: "bare python through env", command: "env A=1 python3", wantSubstr: "Blocked interactive interpreter session"},
 		{name: "python interactive flag", command: "python3 -qi", wantSubstr: "Blocked interactive interpreter session"},
 		{name: "bare shell PTY entry", command: "rtk bash", wantSubstr: "Blocked interactive interpreter session"},
+		{name: "bare sh", command: "sh", wantSubstr: "Blocked interactive interpreter session"},
+		{name: "sh interactive flag", command: "sh -i", wantSubstr: "Blocked interactive interpreter session"},
 		{name: "node interactive flag", command: "node --interactive", wantSubstr: "Blocked interactive interpreter session"},
 		{name: "php interactive flag", command: "php -a", wantSubstr: "Blocked interactive interpreter session"},
 		{name: "deno repl", command: "deno repl", wantSubstr: "Blocked interactive interpreter session"},
 		{name: "workspace python script", command: "python3 .codex/tmp-scripts/check.py", wantSubstr: ""},
 		{name: "python version", command: "python3 --version", wantSubstr: ""},
 		{name: "shell script", command: "bash .codex/tmp-scripts/check.sh", wantSubstr: ""},
+		{name: "sh workspace script", command: "sh .codex/tmp-scripts/check.sh", wantSubstr: ""},
 	}
 
 	for _, tt := range tests {
@@ -766,5 +769,60 @@ func TestTouchesExternalPathParentTraversal(t *testing.T) {
 				t.Fatalf("touchesExternalPath(%q) = %v, want %v", tt.token, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestProtectedConfigPathPatchAndShell(t *testing.T) {
+	outside := "/tmp/other-project"
+	inside := "/Users/me/develop/ai/agent-command-guard"
+	tests := []struct {
+		name    string
+		command string
+		cwd     string
+		want    bool
+	}{
+		{name: "rm outside", command: "rm config/policy.json", cwd: outside, want: true},
+		{name: "rm inside", command: "rm config/policy.json", cwd: inside, want: false},
+		{name: "add file outside", command: "*** Add File: config/policy.json\n+x\n", cwd: outside, want: true},
+		{name: "add file inside", command: "*** Add File: config/policy.json\n+x\n", cwd: inside, want: false},
+		{name: "update file outside", command: "*** Update File: config/policy.json\n", cwd: outside, want: true},
+		{name: "delete file outside", command: "*** Delete File: config/policy.json\n", cwd: outside, want: true},
+		{name: "add unrelated outside", command: "*** Add File: README.md\n+x\n", cwd: outside, want: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var got string
+			if strings.HasPrefix(strings.TrimSpace(tt.command), "***") {
+				got = detectPatchDeleteReasonInCwd(tt.command, tt.cwd)
+			} else {
+				got = evaluateShellCommandInCwd(tt.command, tt.cwd)
+			}
+			blocked := got != ""
+			if blocked != tt.want {
+				t.Fatalf("cwd=%q cmd=%q blocked=%v reason=%q wantBlocked=%v", tt.cwd, tt.command, blocked, got, tt.want)
+			}
+			if tt.want && !strings.Contains(got, "policy configuration") {
+				t.Fatalf("reason %q missing policy configuration marker", got)
+			}
+		})
+	}
+}
+
+func TestCwdMatchesProjectRoot(t *testing.T) {
+	tests := []struct {
+		cwd      string
+		rootName string
+		want     bool
+	}{
+		{cwd: "/repo/agent-command-guard", rootName: "agent-command-guard", want: true},
+		{cwd: "/repo/agent-command-guard-copy", rootName: "agent-command-guard", want: false},
+		{cwd: "/repo/prefix-agent-quality-gate", rootName: "agent-quality-gate", want: false},
+		{cwd: "/repo/agent-quality-gate/subdir", rootName: "agent-quality-gate", want: false},
+		{cwd: "agent-command-guard", rootName: "agent-command-guard", want: false},
+	}
+	for _, tt := range tests {
+		if got := cwdMatchesProjectRoot(tt.cwd, tt.rootName); got != tt.want {
+			t.Errorf("cwdMatchesProjectRoot(%q, %q) = %v, want %v", tt.cwd, tt.rootName, got, tt.want)
+		}
 	}
 }

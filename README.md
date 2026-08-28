@@ -1,10 +1,12 @@
 # Agent Command Guard
 
+[![CI](https://github.com/greenhost87/agent-command-guard/actions/workflows/ci.yml/badge.svg)](https://github.com/greenhost87/agent-command-guard/actions/workflows/ci.yml) [![Release](https://img.shields.io/github/v/release/greenhost87/agent-command-guard)](https://github.com/greenhost87/agent-command-guard/releases) [![License: MIT](https://img.shields.io/github/license/greenhost87/agent-command-guard)](LICENSE) ![CodeRabbit Pull Request Reviews](https://img.shields.io/coderabbit/prs/github/greenhost87/agent-command-guard?utm_source=oss&utm_medium=github&utm_campaign=greenhost87%2Fagent-command-guard&labelColor=171717&color=FF570A&link=https%3A%2F%2Fcoderabbit.ai&label=CodeRabbit+Reviews)
+
 Opinionated command-policy guard for coding agents — **Codex**, **Cursor**, **Pi**. Inspects shell commands before execution, blocks risky patterns. Heuristic guard, not a sandbox.
 
 ## Requirements
 
-- Go 1.26+, Bun 1.4+ (only for Pi adapter in `adapters/pi`)
+- Go 1.27+, Bun 1.4+ (only for Pi adapter in `adapters/pi`)
 - macOS arm64 tested. Linux works for policy, but install-confirmation (`osascript`) is macOS-only (other platforms fail closed).
 
 ## Install
@@ -28,11 +30,15 @@ What it does: builds `build/agent-command-guard`, installs canonical binary to `
 
 ## Policy
 
-Blocked: inline interpreter (`node -e`, `python3 -c`, `bash -c`, backtick/`$(...)` substitution, `env -S`, `eval`, pipe-to-interpreter, `find -exec sh -c`), interpreter stdin/heredoc, interactive REPLs, audit-script deletion (` .codex/tmp-scripts`), deletion outside workspace (`/`, `~/`, `../`), remote transfer (`ssh/scp/sftp/rsync/ftp/lftp`), `agent-transcripts` / `~/.agent-quality-gate`, destructive git (`clean/reset --hard`), `rtk run`.
+Decisions are **allow** or **deny** only. There is no harness-level “ask the agent UI” mode. Deny returns a reason to the agent (`permissionDecisionReason` / Cursor `agent_message`).
 
-Allowed: normal build/test, scoped `grep/glob` via Cursor `file_path`, quoted literals (`echo 'python3 -c ...'`).
+**Ask the human (macOS only):** install-class commands show an `osascript` dialog — `brew install|reinstall|upgrade|bundle`, `pip install` / `python -m pip install`, and `curl|wget … | sh|bash|…` installer pipes. Allow → continue (installer pipes may also skip the pipe-to-interpreter deny). Cancel / no `osascript` → deny.
 
-Details in `main.go` / `cursor.go`.
+**Denied:** inline interpreter (`node -e`, `python3 -c`, `bash -c`, `xargs … sh -c`, backtick/`$(...)` substitution, `env -S`, `eval`, pipe-to-interpreter, `find -exec sh -c`), interpreter stdin/heredoc, interactive REPLs, audit-script deletion (`.codex/tmp-scripts`), deletion outside workspace (`/`, `~/`, `../`), remote transfer (`ssh/scp/sftp/rsync/ftp/lftp`), agent transcripts / `~/.agent-quality-gate`, edits to `config/policy.json` outside this repo, destructive git (`clean` / `reset --hard` / `checkout --`), `rtk run`.
+
+**Allowed:** normal build/test, plain `curl`/`find` without the patterns above, scoped Cursor `grep`/`glob`, quoted literals (`echo 'python3 -c ...'`).
+
+Policy tables live in embedded `config/policy.json` (optional `ACG_POLICY_CONFIG` overlay). Details in `main.go` / `cursor.go` / `policy.go`.
 
 ## Verify
 
