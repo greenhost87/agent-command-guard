@@ -154,7 +154,7 @@ Scan-trigger comparison, original single-pass switch vs config-driven Contains l
 | --- | --- | --- |
 | `echo hello && git status` | 42 ns | 135 ns |
 | long pipe/cleanup chain (early hit) | 208 ns | 3.5 ns* |
-| `rg ... | head -20` (no trigger until end... early `-n` hit) | 110 ns | 3.8 ns* |
+| <code>rg ... \| head -20</code> (no trigger until end... early `-n` hit) | 110 ns | 3.8 ns* |
 | `node -e ...` | 31 ns | 24 ns |
 
 \* fast exits on the first matching trigger (`&&`, `|`). The only regression case is a command whose first trigger appears late; worst measured delta is ~93 ns — still three orders of magnitude below the end-to-end noise floor and invisible in the e2e table above.

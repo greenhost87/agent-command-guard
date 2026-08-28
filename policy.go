@@ -3,6 +3,8 @@ package main
 import (
 	_ "embed"
 	"os"
+	"path/filepath"
+	"strings"
 )
 
 //go:embed config/policy.json
@@ -65,19 +67,20 @@ func firstNonEmpty(values ...string) string {
 }
 
 type policySets struct {
-	separators      stringSet
-	keywords        stringSet
-	wrappers        stringSet
-	shellTools      stringSet
-	patchTools      stringSet
-	remote          stringSet
-	pipe            stringSet
-	node            stringSet
-	shell           stringSet
-	pythonPrefixes  []string
-	scanTriggers    []string
-	protectedPaths  []string
-	protectedReason string
+	separators          stringSet
+	keywords            stringSet
+	wrappers            stringSet
+	shellTools          stringSet
+	patchTools          stringSet
+	remote              stringSet
+	pipe                stringSet
+	node                stringSet
+	shell               stringSet
+	pythonPrefixes      []string
+	scanTriggers        []string
+	protectedPaths      []string
+	protectedPathsLower []string
+	protectedReason     string
 
 	scriptDir               string
 	scriptGuidance          string
@@ -91,22 +94,29 @@ type policySets struct {
 	qualityGateReason       string
 }
 
-func buildPolicySets(config *policyConfig) *policySets {
+func buildPolicySets(config *policyConfig, runtimeProtectedPaths ...string) *policySets {
 	messages := config.Messages
+	protectedPaths := append([]string{}, config.ProtectedPaths...)
+	protectedPaths = append(protectedPaths, runtimeProtectedPaths...)
+	protectedPathsLower := make([]string, len(protectedPaths))
+	for index, path := range protectedPaths {
+		protectedPathsLower[index] = strings.ToLower(path)
+	}
 	sets := &policySets{
-		separators:      toStringSet(config.Separators),
-		keywords:        toStringSet(config.ShellKeywords),
-		wrappers:        toStringSet(config.Wrappers),
-		shellTools:      toStringSet(config.ShellToolNames),
-		patchTools:      toStringSet(config.PatchToolNames),
-		remote:          toStringSet(config.RemoteCommands),
-		pipe:            toStringSet(config.Interpreters.Pipe),
-		node:            toStringSet(config.Interpreters.Node),
-		shell:           toStringSet(config.Interpreters.Shell),
-		pythonPrefixes:  config.Interpreters.PythonPrefixes,
-		scanTriggers:    config.ScanTriggers,
-		protectedPaths:  config.ProtectedPaths,
-		protectedReason: firstNonEmpty(messages.ProtectedReason, "Blocked modification of the agent-command-guard policy configuration. Enforcement policy must stay under explicit review; edit this file manually outside agent tools if needed."),
+		separators:          toStringSet(config.Separators),
+		keywords:            toStringSet(config.ShellKeywords),
+		wrappers:            toStringSet(config.Wrappers),
+		shellTools:          toStringSet(config.ShellToolNames),
+		patchTools:          toStringSet(config.PatchToolNames),
+		remote:              toStringSet(config.RemoteCommands),
+		pipe:                toStringSet(config.Interpreters.Pipe),
+		node:                toStringSet(config.Interpreters.Node),
+		shell:               toStringSet(config.Interpreters.Shell),
+		pythonPrefixes:      config.Interpreters.PythonPrefixes,
+		scanTriggers:        config.ScanTriggers,
+		protectedPaths:      protectedPaths,
+		protectedPathsLower: protectedPathsLower,
+		protectedReason:     firstNonEmpty(messages.ProtectedReason, "Blocked modification of the agent-command-guard policy configuration. Enforcement policy must stay under explicit review; edit this file manually outside agent tools if needed."),
 
 		scriptDir:         firstNonEmpty(messages.ScriptDir, ".codex/tmp-scripts"),
 		scriptGuidance:    firstNonEmpty(messages.ScriptGuidance, "If temporary code is needed, create a readable script under `.codex/tmp-scripts/` in the current project/workspace, run it as a file, and leave it in place for audit."),
@@ -128,24 +138,42 @@ func buildPolicySets(config *policyConfig) *policySets {
 
 // loadMergedPolicyConfig is the production policy load path: parse the embedded
 // defaults, then union/override from ACG_POLICY_CONFIG when that file is readable.
-// The second return is the overlay path to protect (empty when unused).
-func loadMergedPolicyConfig() (*policyConfig, string) {
-	base := parsePolicyConfig(defaultPolicyJSON)
+// The second return contains the lexical and canonical overlay paths to protect.
+func loadMergedPolicyConfig() (*policyConfig, []string) {
+	base, ok := parsePolicyConfig(defaultPolicyJSON)
+	if !ok {
+		panic("embedded policy configuration is invalid")
+	}
 	if path := os.Getenv("ACG_POLICY_CONFIG"); path != "" {
-		if raw, err := os.ReadFile(path); err == nil {
-			overlay := parsePolicyConfig(raw)
-			return mergePolicyConfig(base, overlay), path
+		absolutePath, err := filepath.Abs(path)
+		if err != nil {
+			return base, nil
+		}
+		absolutePath = filepath.Clean(absolutePath)
+		canonicalPath, err := filepath.EvalSymlinks(absolutePath)
+		if err != nil {
+			return base, nil
+		}
+		canonicalPath = filepath.Clean(canonicalPath)
+		protectedPaths := []string{absolutePath}
+		if canonicalPath != absolutePath {
+			protectedPaths = append(protectedPaths, canonicalPath)
+		}
+		if raw, err := os.ReadFile(canonicalPath); err == nil {
+			if overlay, valid := parsePolicyConfig(raw); valid {
+				return mergePolicyConfig(base, overlay), protectedPaths
+			}
+			return base, protectedPaths
 		}
 	}
-	return base, ""
+	return base, nil
 }
 
 // Package-level policy strings are declared in main.go and populated by the
 // policy initializer below from config/policy.json (or ACG_POLICY_CONFIG overlay).
 var policy = func() *policySets {
-	base, protectedPath := loadMergedPolicyConfig()
-	runtimeProtectedConfigPath = protectedPath
-	sets := buildPolicySets(base)
+	base, protectedPaths := loadMergedPolicyConfig()
+	sets := buildPolicySets(base, protectedPaths...)
 	scriptDir = sets.scriptDir
 	scriptGuidance = sets.scriptGuidance
 	inlineInterpreterReason = sets.inlineInterpreterReason
@@ -470,8 +498,16 @@ func parseInterpreterPolicy(data []byte, start int, target *interpreterPolicy) {
 	}
 }
 
-func parsePolicyConfig(data []byte) *policyConfig {
+func parsePolicyConfig(data []byte) (*policyConfig, bool) {
+	start := skipJSONSpace(data, 0)
+	if start >= len(data) || data[start] != '{' {
+		return nil, false
+	}
+	end, ok := skipJSONValue(data, start)
+	if !ok || skipJSONSpace(data, end) != len(data) {
+		return nil, false
+	}
 	var config policyConfig
 	parsePolicyInto(data, &config)
-	return &config
+	return &config, true
 }

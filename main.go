@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"strings"
@@ -24,10 +25,6 @@ var (
 	agentQualityGateCwdToken string
 	agentQualityGateReason   string
 	protectedConfigReason    string
-
-	// runtimeProtectedConfigPath is set when ACG_POLICY_CONFIG overrides the
-	// embedded defaults; the override target gets the same protection.
-	runtimeProtectedConfigPath string
 
 	protectedCwdToken = "agent-command-guard"
 )
@@ -67,7 +64,14 @@ func commandNameToken(token string) string {
 }
 
 func cwdAllowsProtectedConfig(cwd string) bool {
-	return strings.Contains(cwd, protectedCwdToken)
+	return cwdMatchesProjectRoot(cwd, protectedCwdToken)
+}
+
+func cwdMatchesProjectRoot(cwd, rootName string) bool {
+	if cwd == "" || !filepath.IsAbs(cwd) {
+		return false
+	}
+	return filepath.Base(filepath.Clean(cwd)) == rootName
 }
 
 func touchesProtectedPath(token string) bool {
@@ -77,10 +81,6 @@ func touchesProtectedPath(token string) bool {
 			strings.Contains(normalized, "./"+path) {
 			return true
 		}
-	}
-	if runtimeProtectedConfigPath != "" && (strings.Contains(normalized, runtimeProtectedConfigPath) ||
-		strings.Contains(normalized, "/"+runtimeProtectedConfigPath)) {
-		return true
 	}
 	return false
 }
@@ -801,14 +801,11 @@ func detectDestructiveDeletionInCwd(commandText string, tokens []shellToken, spa
 		if !cwdAllowsProtectedConfig(cwd) && name == "find" {
 			loweredCmd := strings.ToLower(commandText)
 			protectedInText := false
-			for _, path := range policy.protectedPaths {
-				if strings.Contains(loweredCmd, strings.ToLower(path)) {
+			for _, path := range policy.protectedPathsLower {
+				if strings.Contains(loweredCmd, path) {
 					protectedInText = true
 					break
 				}
-			}
-			if !protectedInText && runtimeProtectedConfigPath != "" && strings.Contains(loweredCmd, strings.ToLower(runtimeProtectedConfigPath)) {
-				protectedInText = true
 			}
 			if protectedInText {
 				for _, arg := range args {
@@ -877,13 +874,10 @@ func anyTouchesExternalPath(commandText string, args []shellToken) bool {
 func needsDetailedShellScan(commandText string) bool {
 	lowered := strings.ToLower(commandText)
 	// Protected config paths bypass the trigger list — they always need a detailed scan.
-	for _, path := range policy.protectedPaths {
-		if strings.Contains(lowered, strings.ToLower(path)) {
+	for _, path := range policy.protectedPathsLower {
+		if strings.Contains(lowered, path) {
 			return true
 		}
-	}
-	if runtimeProtectedConfigPath != "" && strings.Contains(lowered, strings.ToLower(runtimeProtectedConfigPath)) {
-		return true
 	}
 	// Leading `sh` matched at index 0 in the pre-config switch. A Contains("sh")
 	// trigger would also hit mid-token substrings ("push", "flush"), so keep the
@@ -1254,14 +1248,84 @@ func skipJSONString(data []byte, index int) (int, bool) {
 		return index, false
 	}
 	for index++; index < len(data); index++ {
-		switch data[index] {
+		character := data[index]
+		switch character {
 		case '"':
 			return index + 1, true
 		case '\\':
 			index++
+			if index >= len(data) {
+				return index, false
+			}
+			switch data[index] {
+			case '"', '\\', '/', 'b', 'f', 'n', 'r', 't':
+			case 'u':
+				if index+4 >= len(data) {
+					return len(data), false
+				}
+				for offset := 1; offset <= 4; offset++ {
+					if !isJSONHex(data[index+offset]) {
+						return index + offset, false
+					}
+				}
+				index += 4
+			default:
+				return index, false
+			}
+		default:
+			if character < 0x20 {
+				return index, false
+			}
 		}
 	}
 	return index, false
+}
+
+func isJSONHex(character byte) bool {
+	return character >= '0' && character <= '9' || character >= 'a' && character <= 'f' || character >= 'A' && character <= 'F'
+}
+
+func skipJSONNumber(data []byte, index int) (int, bool) {
+	if index < len(data) && data[index] == '-' {
+		index++
+	}
+	if index >= len(data) {
+		return index, false
+	}
+	if data[index] == '0' {
+		index++
+	} else {
+		if data[index] < '1' || data[index] > '9' {
+			return index, false
+		}
+		for index < len(data) && data[index] >= '0' && data[index] <= '9' {
+			index++
+		}
+	}
+	if index < len(data) && data[index] == '.' {
+		index++
+		start := index
+		for index < len(data) && data[index] >= '0' && data[index] <= '9' {
+			index++
+		}
+		if index == start {
+			return index, false
+		}
+	}
+	if index < len(data) && (data[index] == 'e' || data[index] == 'E') {
+		index++
+		if index < len(data) && (data[index] == '+' || data[index] == '-') {
+			index++
+		}
+		start := index
+		for index < len(data) && data[index] >= '0' && data[index] <= '9' {
+			index++
+		}
+		if index == start {
+			return index, false
+		}
+	}
+	return index, true
 }
 
 func skipJSONValue(data []byte, index int) (int, bool) {
@@ -1298,6 +1362,9 @@ func skipJSONValue(data []byte, index int) (int, bool) {
 			index = skipJSONSpace(data, index)
 			if index < len(data) && data[index] == ',' {
 				index++
+				if next := skipJSONSpace(data, index); next >= len(data) || data[next] == '}' {
+					return next, false
+				}
 				continue
 			}
 			if index < len(data) && data[index] == '}' {
@@ -1323,6 +1390,9 @@ func skipJSONValue(data []byte, index int) (int, bool) {
 			index = skipJSONSpace(data, index)
 			if index < len(data) && data[index] == ',' {
 				index++
+				if next := skipJSONSpace(data, index); next >= len(data) || data[next] == ']' {
+					return next, false
+				}
 				continue
 			}
 			if index < len(data) && data[index] == ']' {
@@ -1331,18 +1401,12 @@ func skipJSONValue(data []byte, index int) (int, bool) {
 			return index, false
 		}
 	default:
-		for index < len(data) {
-			switch data[index] {
-			case ',', '}', ']':
-				return index, true
-			default:
-				if isASCIISpace(data[index]) {
-					return index, true
-				}
-				index++
+		for _, literal := range []string{"true", "false", "null"} {
+			if strings.HasPrefix(string(data[index:]), literal) {
+				return index + len(literal), true
 			}
 		}
-		return index, true
+		return skipJSONNumber(data, index)
 	}
 }
 
@@ -1588,7 +1652,7 @@ func touchesAgentQualityGate(text string) bool {
 }
 
 func cwdAllowsAgentQualityGate(cwd string) bool {
-	return strings.Contains(cwd, agentQualityGateCwdToken)
+	return cwdMatchesProjectRoot(cwd, agentQualityGateCwdToken)
 }
 
 func evaluateAgentQualityGateAccess(text, cwd string) string {

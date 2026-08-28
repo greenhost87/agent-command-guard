@@ -10,6 +10,10 @@ import (
 func BenchmarkParsePolicyJSONStdV1(b *testing.B) {
 	// Parser comparison uses the embedded defaults (always parsed in production).
 	data := defaultPolicyJSON
+	var probe policyConfig
+	if err := jsonv1.Unmarshal(data, &probe); err != nil {
+		b.Fatalf("jsonv1.Unmarshal: %v", err)
+	}
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -20,6 +24,10 @@ func BenchmarkParsePolicyJSONStdV1(b *testing.B) {
 
 func BenchmarkParsePolicyJSONStdV2(b *testing.B) {
 	data := defaultPolicyJSON
+	var probe policyConfig
+	if err := jsonv2.Unmarshal(data, &probe); err != nil {
+		b.Fatalf("jsonv2.Unmarshal: %v", err)
+	}
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -33,7 +41,7 @@ func BenchmarkParsePolicyJSON(b *testing.B) {
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		parsePolicyConfig(data)
+		_, _ = parsePolicyConfig(data)
 	}
 }
 

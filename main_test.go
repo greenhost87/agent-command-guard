@@ -807,3 +807,22 @@ func TestProtectedConfigPathPatchAndShell(t *testing.T) {
 		})
 	}
 }
+
+func TestCwdMatchesProjectRoot(t *testing.T) {
+	tests := []struct {
+		cwd      string
+		rootName string
+		want     bool
+	}{
+		{cwd: "/repo/agent-command-guard", rootName: "agent-command-guard", want: true},
+		{cwd: "/repo/agent-command-guard-copy", rootName: "agent-command-guard", want: false},
+		{cwd: "/repo/prefix-agent-quality-gate", rootName: "agent-quality-gate", want: false},
+		{cwd: "/repo/agent-quality-gate/subdir", rootName: "agent-quality-gate", want: false},
+		{cwd: "agent-command-guard", rootName: "agent-command-guard", want: false},
+	}
+	for _, tt := range tests {
+		if got := cwdMatchesProjectRoot(tt.cwd, tt.rootName); got != tt.want {
+			t.Errorf("cwdMatchesProjectRoot(%q, %q) = %v, want %v", tt.cwd, tt.rootName, got, tt.want)
+		}
+	}
+}
