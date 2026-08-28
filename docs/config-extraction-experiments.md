@@ -184,11 +184,14 @@ Config: `protected_paths: ["config/policy.json"]` + `messages.protected_reason`.
 Enforcement: shell `rm/rmdir/unlink/trash(-put)` / `mv/cp/tee` / `find -delete` / `-exec rm` / redirections `> >| >> 2> &>` and patch `Delete File:` / `Update File:` touching a protected path return `protectedConfigReason`. To keep maintainability, the check is cwd-aware:
 
 ```go
-cwdAllowsProtectedConfig(cwd) = strings.Contains(cwd, "agent-command-guard")
+cwdAllowsProtectedConfig(cwd) = cwdMatchesProjectRoot(cwd, "agent-command-guard")
+// cwdMatchesProjectRoot requires an absolute, cleaned path whose basename is exactly "agent-command-guard":
+//   filepath.IsAbs(cwd) && filepath.Base(filepath.Clean(cwd)) == "agent-command-guard"
 ```
 
-* `cwd` inside `agent-command-guard` (maintainer editing own policy) → allow
-* any other `cwd` (agent in another project) → deny
+* `cwd` == `.../agent-command-guard` (absolute, basename exactly `agent-command-guard`) → allow (maintainer editing own policy)
+* `cwd` == `.../agent-command-guard/subdir` → deny (basename is `subdir`, not `agent-command-guard`)
+* `cwd` == `/tmp/other` or `agent-command-guard` (relative) → deny (agent in another project or non-absolute)
 
 This mirrors the existing `agent-quality-gate` gate (`cwdAllowsAgentQualityGate`). `needsDetailedShellScan` was also extended to always enter the detailed scan when the command contains a protected path (lower-cased), plus `scan_triggers` got `cp `, `mv `, `tee`, `policy.json`, `config/policy.json` so the scan is entered even before the destructive check.
 

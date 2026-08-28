@@ -72,9 +72,9 @@ var benchScanInputs = []string{
 
 func BenchmarkScanTriggersConfigLoop(b *testing.B) {
 	for _, input := range benchScanInputs {
-		text := strings.ToLower(input)
 		b.Run(input[:24], func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
+				text := strings.ToLower(input)
 				for _, trigger := range policy.scanTriggers {
 					if strings.Contains(text, trigger) {
 						break
@@ -206,10 +206,9 @@ func needsDetailedShellScanSwitch(commandText string) bool {
 
 func BenchmarkScanTriggersOrigSwitch(b *testing.B) {
 	for _, input := range benchScanInputs {
-		text := strings.ToLower(input)
 		b.Run(input[:24], func(b *testing.B) {
 			for i := 0; i < b.N; i++ {
-				needsDetailedShellScanSwitch(text)
+				needsDetailedShellScanSwitch(input)
 			}
 		})
 	}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -75,10 +76,12 @@ func cwdMatchesProjectRoot(cwd, rootName string) bool {
 }
 
 func touchesProtectedPath(token string) bool {
-	normalized := strings.ReplaceAll(token, `\`, "/")
-	for _, path := range policy.protectedPaths {
-		if strings.Contains(normalized, path) || strings.Contains(normalized, "/"+path) ||
-			strings.Contains(normalized, "./"+path) {
+	normalizedToken := path.Clean(strings.ReplaceAll(token, `\`, "/"))
+	for _, protected := range policy.protectedPaths {
+		normalizedProtected := path.Clean(strings.ReplaceAll(protected, `\`, "/"))
+		if strings.Contains(normalizedToken, normalizedProtected) ||
+			strings.Contains(normalizedToken, "/"+normalizedProtected) ||
+			strings.Contains(normalizedToken, "./"+normalizedProtected) {
 			return true
 		}
 	}
