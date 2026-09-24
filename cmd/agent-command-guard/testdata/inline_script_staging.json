@@ -1,0 +1,109 @@
+{
+  "cases": [
+    {
+      "name": "node-e-double-quoted",
+      "command": "node -e \"console.log(1)\"",
+      "want_code": "console.log(1)"
+    },
+    {
+      "name": "node-e-single-quoted",
+      "command": "node -e 'console.log(2)'",
+      "want_code": "console.log(2)"
+    },
+    {
+      "name": "node-long-eval-attached",
+      "command": "node --eval='console.log(3)'",
+      "want_code": "console.log(3)"
+    },
+    {
+      "name": "python-c-single-quoted",
+      "command": "python3 -c 'print(1)'",
+      "want_code": "print(1)"
+    },
+    {
+      "name": "python-c-double-quoted",
+      "command": "python3 -c \"print(2)\"",
+      "want_code": "print(2)"
+    },
+    {
+      "name": "python-quoted-escaping",
+      "command": "python3 -c \"print(\\\"ok\\\")\"",
+      "want_code": "print(\"ok\")"
+    },
+    {
+      "name": "python-multiline-literal",
+      "command": "python3 -c 'print(1)\nprint(2)'",
+      "want_code": "print(1)\nprint(2)"
+    },
+    {
+      "name": "node-print-mode-is-not-script",
+      "command": "node -p '1 + 1'",
+      "want_code": null
+    },
+    {
+      "name": "shell-inline-unsupported",
+      "command": "bash -c 'echo ok'",
+      "want_code": null
+    },
+    {
+      "name": "python-stdin-heredoc-unsupported",
+      "command": "python3 - <<'PY'\nprint(1)\nPY",
+      "want_code": null
+    },
+    {
+      "name": "node-dynamic-variable",
+      "command": "node -e \"$CODE\"",
+      "want_code": null
+    },
+    {
+      "name": "python-command-substitution",
+      "command": "python3 -c \"$(cat script.py)\"",
+      "want_code": null
+    },
+    {
+      "name": "node-nested-command-substitution",
+      "command": "echo \"$(node -e 'console.log(1)')\"",
+      "want_code": null
+    },
+    {
+      "name": "python-followed-by-chain",
+      "command": "python3 -c 'print(1)' && echo done",
+      "want_code": null
+    },
+    {
+      "name": "node-followed-by-pipe",
+      "command": "node -e 'console.log(1)' | cat",
+      "want_code": null
+    },
+    {
+      "name": "python-preceded-by-pipe",
+      "command": "printf x | python3 -c 'print(1)'",
+      "want_code": null
+    },
+    {
+      "name": "python-output-redirection",
+      "command": "python3 -c 'print(1)' > result.txt",
+      "want_code": null
+    },
+    {
+      "name": "python-extra-positional-argument",
+      "command": "python3 -c 'print(1)' arg",
+      "want_code": null
+    },
+    {
+      "name": "node-multiple-evals",
+      "command": "node -e 'console.log(1)' -e 'console.log(2)'",
+      "want_code": null
+    },
+    {
+      "name": "node-unclosed-quote",
+      "command": "node -e 'console.log(1)",
+      "want_code": null
+    },
+    {
+      "name": "node-missing-program",
+      "command": "node -e",
+      "want_code": null
+    }
+  ]
+}

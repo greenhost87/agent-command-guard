@@ -32,7 +32,7 @@ func handleCursor(body []byte) bool {
 	case "beforeShellExecution":
 		if fields.command != "" {
 			if reason := evaluateShellCommandInCwd(fields.command, fields.cwd); reason != "" {
-				denyCursor(fields.command, reason)
+				denyCursorMessage(shellDenialMessage(fields.command, fields.cwd, reason))
 				logHookDecision(body, "cursor", false)
 				return true
 			}
@@ -248,10 +248,6 @@ func scanJSONStringArray(data []byte, index int) ([]string, int, bool) {
 
 func allowCursor() {
 	_, _ = os.Stdout.WriteString(`{"permission":"allow"}` + "\n")
-}
-
-func denyCursor(commandText, reason string) {
-	denyCursorMessage(denialMessage(commandText, reason))
 }
 
 func denyCursorMessage(message string) {

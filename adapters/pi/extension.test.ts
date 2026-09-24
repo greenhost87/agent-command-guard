@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,10 +10,6 @@ import { emitBash, loadPiAdapter, type LoadedPiAdapter } from "./host.ts";
 
 const repoRoot = fileURLToPath(new URL("../..", import.meta.url));
 const deniedCommand = `node -e "console.log(1)"`;
-const deniedReason = [
-	`Blocked shell command: ${deniedCommand}`,
-	"Blocked inline interpreter code. If temporary code is needed, create a readable script under `.codex/tmp-scripts/` in the current project/workspace, run it as a file, and leave it in place for audit.",
-].join("\n");
 
 async function buildGuard(): Promise<void> {
 	await new Promise<void>((resolve, reject) => {
@@ -54,9 +50,16 @@ describe("Pi adapter production path", () => {
 		expect(result).toBeUndefined();
 	});
 
-	it("returns block and the engine deny reason for inline interpreter bash", async () => {
+	it("blocks inline bash, saves its code, and forwards the file path", async () => {
 		const result = await emitBash(runner, deniedCommand);
-		expect(result).toEqual({ block: true, reason: deniedReason });
+		expect(result?.block).toBe(true);
+		expect(result?.reason).toContain("Blocked inline interpreter code");
+		expect(result?.reason).not.toContain("console.log(1)");
+		const relative = result?.reason?.match(/\.codex\/tmp-scripts\/inline-[0-9a-f]{32}\.js/)?.[0];
+		expect(relative).toBeDefined();
+		const file = join(root, relative!);
+		expect(await readFile(file, "utf8")).toBe("console.log(1)");
+		expect((await stat(file)).mode & 0o777).toBe(0o600);
 	});
 
 	it("ignores non-bash tool calls", async () => {

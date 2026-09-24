@@ -28,7 +28,10 @@ func denialMessage(commandText, reason string) string {
 }
 
 func deny(commandText, reason string) {
-	message := denialMessage(commandText, reason)
+	denyMessage(denialMessage(commandText, reason))
+}
+
+func denyMessage(message string) {
 	encoded := make([]byte, 0, len(message)+180)
 	encoded = append(encoded, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":`...)
 	encoded = appendJSONString(encoded, message)
@@ -66,6 +69,7 @@ func main() {
 	data := extractPayload(body)
 
 	var commandText, reason string
+	shellTool := false
 	if isPatchToolName(data.ToolName) {
 		commandText = extractCommand(data.ToolInput)
 		if commandText == "" {
@@ -82,12 +86,17 @@ func main() {
 		if commandText == "" {
 			return
 		}
+		shellTool = true
 		reason = evaluateShellCommandInCwd(commandText, data.Cwd)
 	}
 
 	integration := resolveIntegration(false)
 	if reason != "" {
-		deny(commandText, reason)
+		if shellTool {
+			denyMessage(shellDenialMessage(commandText, data.Cwd, reason))
+		} else {
+			deny(commandText, reason)
+		}
 		logHookDecision(body, integration, false)
 		return
 	}

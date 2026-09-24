@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -33,6 +33,7 @@ export async function loadPiAdapter(
 	} else {
 		root = await mkdtemp(join(tmpdir(), options?.cwdPrefix ?? "acg-pi-"));
 	}
+	root = await realpath(root);
 	const agentDir = join(root, "agent");
 	await mkdir(agentDir, { recursive: true });
 	const settingsManager = SettingsManager.inMemory();
