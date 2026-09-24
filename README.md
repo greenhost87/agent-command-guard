@@ -42,7 +42,7 @@ Decisions are **allow** or **deny** only. There is no harness-level “ask the a
 
 **Allowed:** normal build/test, plain `curl`/`find` without the patterns above, scoped Cursor `grep`/`glob`, quoted literals (`echo 'python3 -c ...'`).
 
-Policy tables live in embedded `config/policy.json` (optional `ACG_POLICY_CONFIG` overlay). Details in `main.go` / `cursor.go` / `policy.go`.
+Policy tables live in embedded `cmd/agent-command-guard/config/policy.json` (optional `ACG_POLICY_CONFIG` overlay). Details are in `cmd/agent-command-guard/`.
 
 ## Verify
 

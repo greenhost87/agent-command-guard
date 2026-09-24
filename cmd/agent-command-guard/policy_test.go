@@ -8,6 +8,18 @@ import (
 	"testing"
 )
 
+func TestGeneratedDefaultPolicySetsMatchEmbeddedPolicy(t *testing.T) {
+	config, ok := parsePolicyConfig(defaultPolicyJSON)
+	if !ok {
+		t.Fatal("embedded policy configuration is invalid")
+	}
+	want := buildPolicySets(config)
+	got := buildDefaultPolicySets()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("generated default policy differs from parsed embedded policy:\ngot  %#v\nwant %#v", got, want)
+	}
+}
+
 func TestParsePolicyConfigRejectsMalformedJSON(t *testing.T) {
 	tests := []string{
 		`{"protected_paths":[]`,

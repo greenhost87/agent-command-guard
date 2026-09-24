@@ -14,7 +14,13 @@ func dailyLogFileName(now time.Time) string {
 }
 
 func loggingEnabled() bool {
-	return os.Getenv("ACG_LOG") != "0"
+	switch os.Getenv("ACG_LOG") {
+	case "0":
+		return false
+	case "1":
+		return true
+	}
+	return os.Getenv("ACG_LOG_PATH") != ""
 }
 
 func logFilePath(now time.Time) string {

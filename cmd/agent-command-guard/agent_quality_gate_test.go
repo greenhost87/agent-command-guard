@@ -1,3 +1,4 @@
+// Package main tests the agent command guard quality contract.
 package main
 
 import (

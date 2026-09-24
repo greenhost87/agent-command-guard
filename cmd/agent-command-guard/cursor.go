@@ -153,122 +153,65 @@ func bytesContainAgentTranscripts(data []byte) bool {
 
 func parseCursorHook(data []byte) cursorHookFields {
 	var fields cursorHookFields
-	index := skipJSONSpace(data, 0)
-	if index >= len(data) || data[index] != '{' {
-		return fields
-	}
-	index++
-	for {
-		index = skipJSONSpace(data, index)
-		if index >= len(data) || data[index] == '}' {
-			return fields
-		}
-		key, next, ok := scanJSONString(data, index)
-		if !ok {
-			return cursorHookFields{}
-		}
-		index = skipJSONSpace(data, next)
-		if index >= len(data) || data[index] != ':' {
-			return cursorHookFields{}
-		}
-		valueStart := skipJSONSpace(data, index+1)
-		valueEnd, ok := skipJSONValue(data, valueStart)
-		if !ok {
-			return cursorHookFields{}
-		}
+	valid := scanJSONObject(data, func(key string, start, end int) {
+		value, _, stringOK := scanJSONString(data, start)
 		switch key {
 		case "hook_event_name":
-			if value, _, ok := scanJSONString(data, valueStart); ok {
+			if stringOK {
 				fields.eventName = value
 			}
 		case "command":
-			if value, _, ok := scanJSONString(data, valueStart); ok {
+			if stringOK {
 				fields.command = value
 			}
 		case "file_path":
-			if value, _, ok := scanJSONString(data, valueStart); ok {
+			if stringOK {
 				fields.filePath = value
 			}
 		case "tool_name":
-			if value, _, ok := scanJSONString(data, valueStart); ok {
+			if stringOK {
 				fields.toolName = value
 			}
 		case "cwd":
-			if value, _, ok := scanJSONString(data, valueStart); ok {
+			if stringOK {
 				fields.cwd = value
 			}
 		case "workspace_roots":
-			if values, _, ok := scanJSONStringArray(data, valueStart); ok {
+			if values, _, ok := scanJSONStringArray(data, start); ok {
 				fields.workspaceRoots = values
 			}
 		case "tool_input":
-			fields.toolInput = data[valueStart:valueEnd]
+			fields.toolInput = data[start:end]
 		}
-		index = skipJSONSpace(data, valueEnd)
-		if index < len(data) && data[index] == ',' {
-			index++
-			continue
-		}
-		if index < len(data) && data[index] == '}' {
-			return fields
-		}
+	})
+	if !valid {
 		return cursorHookFields{}
 	}
+	return fields
 }
 
 func parseCursorSearchInput(data []byte) cursorSearchInput {
 	var fields cursorSearchInput
-	index := skipJSONSpace(data, 0)
-	if index >= len(data) || data[index] != '{' {
-		return fields
-	}
-	index++
-	for {
-		index = skipJSONSpace(data, index)
-		if index >= len(data) || data[index] == '}' {
-			return fields
-		}
-		key, next, ok := scanJSONString(data, index)
+	valid := scanJSONObject(data, func(key string, start, _ int) {
+		value, _, ok := scanJSONString(data, start)
 		if !ok {
-			return cursorSearchInput{}
-		}
-		index = skipJSONSpace(data, next)
-		if index >= len(data) || data[index] != ':' {
-			return cursorSearchInput{}
-		}
-		valueStart := skipJSONSpace(data, index+1)
-		valueEnd, ok := skipJSONValue(data, valueStart)
-		if !ok {
-			return cursorSearchInput{}
+			return
 		}
 		switch key {
 		case "path", "file_path":
-			if value, _, ok := scanJSONString(data, valueStart); ok {
-				fields.path = value
-			}
+			fields.path = value
 		case "glob":
-			if value, _, ok := scanJSONString(data, valueStart); ok {
-				fields.glob = value
-			}
+			fields.glob = value
 		case "globPattern", "glob_pattern":
-			if value, _, ok := scanJSONString(data, valueStart); ok {
-				fields.globPattern = value
-			}
+			fields.globPattern = value
 		case "target_directory", "targetDirectory":
-			if value, _, ok := scanJSONString(data, valueStart); ok {
-				fields.targetDirectory = value
-			}
+			fields.targetDirectory = value
 		}
-		index = skipJSONSpace(data, valueEnd)
-		if index < len(data) && data[index] == ',' {
-			index++
-			continue
-		}
-		if index < len(data) && data[index] == '}' {
-			return fields
-		}
+	})
+	if !valid {
 		return cursorSearchInput{}
 	}
+	return fields
 }
 
 func scanJSONStringArray(data []byte, index int) ([]string, int, bool) {

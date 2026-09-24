@@ -2,8 +2,8 @@
 
 ## Layout
 
-- `main.go` is the shared command-policy engine and the Codex PreToolUse stdin/stdout protocol.
-- `cursor.go` is the Cursor adapter: `beforeShellExecution` over the shared engine, plus `preToolUse` policy for unconstrained `grep`/`glob`. Cursor tests live in `cursor_test.go`.
+- `cmd/agent-command-guard/main.go` is the shared command-policy engine and the Codex PreToolUse stdin/stdout protocol.
+- `cmd/agent-command-guard/cursor.go` is the Cursor adapter: `beforeShellExecution` over the shared engine, plus `preToolUse` policy for unconstrained `grep`/`glob`. Cursor tests live beside it.
 - `adapters/pi/extension.ts` is the Pi adapter; it invokes `build/agent-command-guard`.
 - `adapters/pi/host.ts` is the Pi test host helper.
 - `adapters/pi/extension.test.ts` loads that adapter through Pi's `DefaultResourceLoader` and `emitToolCall`. It never creates an agent session or calls a model.
@@ -14,7 +14,7 @@
 ## Commands
 
 ```sh
-go test .
+go test ./cmd/agent-command-guard
 bun --cwd adapters/pi test
 ./scripts/build.sh
 ./scripts/install.sh
@@ -28,7 +28,7 @@ bun --cwd adapters/pi test
 
 ## Hook Change Discipline
 
-Changes to `main.go` or `cursor.go` follow this sequence:
+Changes to `cmd/agent-command-guard/main.go` or `cmd/agent-command-guard/cursor.go` follow this sequence:
 
 1. Measure the current baseline:
 
@@ -39,7 +39,7 @@ Changes to `main.go` or `cursor.go` follow this sequence:
 
 2. Make the change.
 
-3. Run `go test .`
+3. Run `go test ./cmd/agent-command-guard`
 
 4. Measure again with the same benchmark shape:
 
