@@ -16,6 +16,11 @@
       "want_code": "console.log(3)"
     },
     {
+      "name": "rtk-node-module-eval",
+      "command": "rtk proxy node --input-type=module -e 'console.log(5)'",
+      "want_code": "console.log(5)"
+    },
+    {
       "name": "python-c-single-quoted",
       "command": "python3 -c 'print(1)'",
       "want_code": "print(1)"
@@ -46,9 +51,44 @@
       "want_code": null
     },
     {
-      "name": "python-stdin-heredoc-unsupported",
+      "name": "python-stdin-heredoc",
       "command": "python3 - <<'PY'\nprint(1)\nPY",
-      "want_code": null
+      "want_code": "print(1)\n"
+    },
+    {
+      "name": "node-stdin-heredoc",
+      "command": "node - <<'JS'\nconsole.log(1)\nJS",
+      "want_code": "console.log(1)\n"
+    },
+    {
+      "name": "bun-stdin-heredoc",
+      "command": "bun <<\"TS\"\nconsole.log(1)\nTS",
+      "want_code": "console.log(1)\n"
+    },
+    {
+      "name": "rtk-python-stdin-heredoc",
+      "command": "rtk python3 - <<'PY'\nprint(2)\nPY",
+      "want_code": "print(2)\n"
+    },
+    {
+      "name": "rtk-proxy-node-stdin-heredoc",
+      "command": "rtk proxy node <<'JS'\nconsole.log(2)\nJS",
+      "want_code": "console.log(2)\n"
+    },
+    {
+      "name": "bun-e",
+      "command": "bun -e 'console.log(4)'",
+      "want_code": "console.log(4)"
+    },
+    {
+      "name": "rtk-bun-e-with-string-literal",
+      "command": "rtk bun -e 'console.log(\"ok\")'",
+      "want_code": "console.log(\"ok\")"
+    },
+    {
+      "name": "rtk-proxy-python-c",
+      "command": "rtk proxy python3 -c 'print(3)'",
+      "want_code": "print(3)"
     },
     {
       "name": "node-dynamic-variable",

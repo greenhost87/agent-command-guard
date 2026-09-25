@@ -94,32 +94,73 @@ func literalCode(raw string) (string, bool) {
 	return "", false
 }
 
+func unwrapLiteralInterpreter(words []string) ([]string, bool) {
+	if len(words) == 0 {
+		return nil, false
+	}
+	if words[0] == "rtk" {
+		words = words[1:]
+		if len(words) > 0 && strings.EqualFold(words[0], "proxy") {
+			words = words[1:]
+		}
+	}
+	if len(words) == 0 || words[0] != commandNameToken(words[0]) {
+		return nil, false
+	}
+	return words, true
+}
+
+func interpreterExtension(name string) string {
+	switch {
+	case isNodeInterpreter(name):
+		return ".js"
+	case isPythonInterpreter(name):
+		return ".py"
+	case name == "bun":
+		return ".ts"
+	default:
+		return ""
+	}
+}
+
 func extractInlineScript(command string) (code, extension string, ok bool) {
 	words, valid := literalWords(command)
 	if !valid || len(words) < 2 {
 		return "", "", false
 	}
-	name := commandNameToken(words[0])
-	if words[0] != name { // No wrappers or executable paths in the first version.
+	words, valid = unwrapLiteralInterpreter(words)
+	if !valid || len(words) < 2 {
 		return "", "", false
 	}
+	name := words[0]
+	extension = interpreterExtension(name)
 	var raw string
 	switch {
 	case isNodeInterpreter(name):
-		extension = ".js"
+		args := words[1:]
+		if len(args) == 3 && args[0] == "--input-type=module" {
+			args = args[1:]
+		} else if len(args) == 4 && args[0] == "--input-type" && args[1] == "module" {
+			args = args[2:]
+		}
+		if len(args) == 2 && (args[0] == "-e" || args[0] == "--eval") {
+			raw = args[1]
+		} else if len(args) == 1 && strings.HasPrefix(args[0], "--eval=") {
+			raw = strings.TrimPrefix(args[0], "--eval=")
+		}
+	case isPythonInterpreter(name):
+		if len(words) == 3 && words[1] == "-c" {
+			raw = words[2]
+		}
+	case name == "bun":
 		if len(words) == 3 && (words[1] == "-e" || words[1] == "--eval") {
 			raw = words[2]
 		} else if len(words) == 2 && strings.HasPrefix(words[1], "--eval=") {
 			raw = strings.TrimPrefix(words[1], "--eval=")
 		}
-	case isPythonInterpreter(name):
-		extension = ".py"
-		if len(words) == 3 && words[1] == "-c" {
-			raw = words[2]
-		}
 	}
 	code, ok = literalCode(raw)
-	return code, extension, ok
+	return code, extension, ok && extension != ""
 }
 
 // openLiteralDirectory pins each directory before accessing the next one.
@@ -151,11 +192,67 @@ func openLiteralDirectory(root *os.Root, name string, create bool) (*os.Root, er
 	return child, nil
 }
 
+func extractStdinHeredoc(command string) (string, string, bool) {
+	lines := strings.Split(command, "\n")
+	if len(lines) < 3 {
+		return "", "", false
+	}
+	header := lines[0]
+	if strings.HasSuffix(header, "\r") {
+		header = strings.TrimSuffix(header, "\r")
+	}
+	fields := strings.Fields(header)
+	fields, valid := unwrapLiteralInterpreter(fields)
+	if !valid || len(fields) < 2 || len(fields) > 3 {
+		return "", "", false
+	}
+	extension := interpreterExtension(fields[0])
+	if extension == "" || (len(fields) == 3 && fields[1] != "-") {
+		return "", "", false
+	}
+	redir := fields[len(fields)-1]
+	if !strings.HasPrefix(redir, "<<") || strings.HasPrefix(redir, "<<-") {
+		return "", "", false
+	}
+	delimiter := strings.TrimPrefix(redir, "<<")
+	if len(delimiter) < 3 || (delimiter[0] != '\'' && delimiter[0] != '"') || delimiter[len(delimiter)-1] != delimiter[0] {
+		return "", "", false
+	}
+	delimiter = delimiter[1 : len(delimiter)-1]
+	if delimiter == "" || strings.ContainsAny(delimiter, " \t\\\"'$") {
+		return "", "", false
+	}
+	end := -1
+	for index := 1; index < len(lines); index++ {
+		if strings.TrimSuffix(lines[index], "\r") == delimiter {
+			end = index
+			break
+		}
+	}
+	if end < 0 {
+		return "", "", false
+	}
+	for _, trailing := range lines[end+1:] {
+		if strings.TrimSpace(strings.TrimSuffix(trailing, "\r")) != "" {
+			return "", "", false
+		}
+	}
+	return strings.Join(lines[1:end], "\n") + "\n", extension, true
+}
+
+func extractPythonHeredoc(command string) (string, bool) {
+	code, extension, ok := extractStdinHeredoc(command)
+	return code, ok && extension == ".py"
+}
+
 func stageInlineScript(command, cwd string) string {
 	if !filepath.IsAbs(cwd) || cwd != filepath.Clean(cwd) || cwd == string(filepath.Separator) || scriptDir != ".codex/tmp-scripts" {
 		return ""
 	}
 	code, extension, ok := extractInlineScript(command)
+	if !ok {
+		code, extension, ok = extractStdinHeredoc(command)
+	}
 	if !ok {
 		return ""
 	}
@@ -202,9 +299,9 @@ func stageInlineScript(command, cwd string) string {
 }
 
 func shellDenialMessage(command, cwd, reason string) string {
-	if reason == inlineInterpreterReason {
+	if reason == inlineInterpreterReason || reason == stdinInterpreterReason {
 		if path := stageInlineScript(command, cwd); path != "" {
-			return "Blocked shell command.\n" + reason + "\nSaved inline code to " + path + "; original command was not run. Review the file before running it as a script (eval and file argument semantics may differ)."
+			return "Blocked shell command.\n" + reason + "\nSaved interpreter code to " + path + "; original command was not run. Review the file before running it as a script."
 		}
 	}
 	return denialMessage(command, reason)

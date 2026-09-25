@@ -32,6 +32,9 @@ func TestInlineStagingFixtures(t *testing.T) {
 	for _, tc := range fixtures.Cases {
 		t.Run(tc.Name, func(t *testing.T) {
 			code, ext, ok := extractInlineScript(tc.Command)
+			if !ok {
+				code, ext, ok = extractStdinHeredoc(tc.Command)
+			}
 			cwd := stagingWorkspace(t)
 			path := stageInlineScript(tc.Command, cwd)
 			if tc.WantCode == nil {
@@ -46,7 +49,7 @@ func TestInlineStagingFixtures(t *testing.T) {
 			if !ok || code != *tc.WantCode {
 				t.Fatalf("extracted (%q, %v), want %q", code, ok, *tc.WantCode)
 			}
-			if ext != ".py" && ext != ".js" || !strings.HasSuffix(path, ext) {
+			if ext != ".py" && ext != ".js" && ext != ".ts" || !strings.HasSuffix(path, ext) {
 				t.Fatalf("extension = %q, path = %q", ext, path)
 			}
 			assertStaged(t, tc.Command, cwd, "original command was not run; Saved inline code to "+path, *tc.WantCode)
@@ -54,7 +57,7 @@ func TestInlineStagingFixtures(t *testing.T) {
 	}
 }
 
-var stagedPathPattern = regexp.MustCompile(`\.codex/tmp-scripts/inline-[0-9a-f]{32}\.(js|py)`)
+var stagedPathPattern = regexp.MustCompile(`\.codex/tmp-scripts/inline-[0-9a-f]{32}\.(js|py|ts)`)
 
 func assertStaged(t *testing.T, command, cwd, message, code string) string {
 	t.Helper()
@@ -115,6 +118,52 @@ func TestCodexStagesInlineScriptAndPreservesDenial(t *testing.T) {
 	assertStaged(t, command, cwd, response.HookSpecificOutput.PermissionDecisionReason, `require("fs").writeFileSync("sentinel", "unexpected")`)
 	if _, err := os.Stat(filepath.Join(cwd, "sentinel")); !os.IsNotExist(err) {
 		t.Fatalf("inline program was executed: %v", err)
+	}
+}
+
+func TestPythonHeredocIsStagedAndStillDenied(t *testing.T) {
+	cwd := stagingWorkspace(t)
+	command := "python3 - <<'PY'\nfrom pathlib import Path\nprint(Path.cwd())\nPY"
+	reason := evaluateShellCommandInCwd(command, cwd)
+	if reason != stdinInterpreterReason {
+		t.Fatalf("reason = %q, want stdin interpreter denial", reason)
+	}
+	message := shellDenialMessage(command, cwd, reason)
+	path := assertStaged(t, command, cwd, message, "from pathlib import Path\nprint(Path.cwd())\n")
+	if !strings.Contains(message, "Saved interpreter code to "+path) {
+		t.Fatalf("missing staged-file guidance: %q", message)
+	}
+}
+
+func TestBunAndRtkInterpreterCodeIsStagedAndDenied(t *testing.T) {
+	cwd := stagingWorkspace(t)
+	for _, tc := range []struct {
+		command, wantCode string
+	}{
+		{command: `rtk bun -e 'console.log("ok")'`, wantCode: `console.log("ok")`},
+		{command: "rtk proxy bun - <<'TS'\nconsole.log(1)\nTS", wantCode: "console.log(1)\n"},
+	} {
+		reason := evaluateShellCommandInCwd(tc.command, cwd)
+		if reason == "" {
+			t.Fatalf("expected denial for %q", tc.command)
+		}
+		message := shellDenialMessage(tc.command, cwd, reason)
+		assertStaged(t, tc.command, cwd, message, tc.wantCode)
+	}
+}
+
+func TestPythonHeredocStagingRejectsUnsafeOrUnclearCommands(t *testing.T) {
+	cwd := stagingWorkspace(t)
+	for _, command := range []string{
+		"python3 - <<PY\nprint(1)\nPY",
+		"python3 - <<'PY'\nprint(1)\nPY\nrm -rf /",
+		"python3 - <<-'PY'\nprint(1)\nPY",
+		"python3 - <<'PY'\nprint(1)",
+		"python3 script.py <<'PY'\nprint(1)\nPY",
+	} {
+		if path := stageInlineScript(command, cwd); path != "" {
+			t.Errorf("unsafe or unclear heredoc staged at %q: %q", path, command)
+		}
 	}
 }
 

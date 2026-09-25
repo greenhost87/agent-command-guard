@@ -58,7 +58,7 @@ func readsInterpreterProgramFromStdin(commandText string, name string, args []sh
 		return false
 	}
 	switch {
-	case isNodeInterpreter(name), isPythonInterpreter(name),
+	case isNodeInterpreter(name), isPythonInterpreter(name), name == "bun",
 		name == "perl", name == "ruby", name == "php", name == "osascript":
 		return true
 	case isShellInterpreter(name):
