@@ -4,7 +4,7 @@ import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { isToolCallEventType, type ExtensionAPI, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
+import { isBashToolResult, isToolCallEventType, type ExtensionAPI, type ExtensionFactory } from "@earendil-works/pi-coding-agent";
 
 function resolveDefaultHookPath(): string {
 	const envPath = process.env.ACG_BINARY ?? process.env.AGENT_COMMAND_GUARD_BIN;
@@ -31,9 +31,18 @@ interface HookResponse {
 		permissionDecision?: string;
 		permissionDecisionReason?: string;
 	};
+	agentCommandGuard?: {
+		rewriteCommand?: string;
+		scriptPath?: string;
+	};
 }
 
-function inspectCommand(command: string, hookPath: string, cwd: string): Promise<string | undefined> {
+interface InspectionResult {
+	reason?: string;
+	rewrite?: { command: string; scriptPath: string };
+}
+
+function inspectCommand(command: string, hookPath: string, cwd: string): Promise<InspectionResult> {
 	return new Promise((resolve) => {
 		const child = spawn(hookPath, [], {
 			stdio: ["pipe", "pipe", "pipe"],
@@ -51,18 +60,18 @@ function inspectCommand(command: string, hookPath: string, cwd: string): Promise
 		});
 		child.on("close", (code: number | null) => {
 			if (launchError) {
-				resolve(`Protective hook failed: ${launchError.message}`);
+				resolve({ reason: `Protective hook failed: ${launchError.message}` });
 				return;
 			}
 			if (code !== 0) {
 				const details = Buffer.concat(stderr).toString("utf8").trim();
-				resolve(details ? `Protective hook exited with code ${code}: ${details}` : `Protective hook exited with code ${code}`);
+				resolve({ reason: details ? `Protective hook exited with code ${code}: ${details}` : `Protective hook exited with code ${code}` });
 				return;
 			}
 
 			const output = Buffer.concat(stdout).toString("utf8").trim();
 			if (!output) {
-				resolve(undefined);
+				resolve({});
 				return;
 			}
 
@@ -70,12 +79,17 @@ function inspectCommand(command: string, hookPath: string, cwd: string): Promise
 				const response = JSON.parse(output) as HookResponse;
 				const decision = response.hookSpecificOutput;
 				if (decision?.permissionDecision === "deny") {
-					resolve(decision.permissionDecisionReason ?? "Blocked by protective hook");
+					resolve({ reason: decision.permissionDecisionReason ?? "Blocked by protective hook" });
 					return;
 				}
-				resolve("Protective hook returned an unexpected response");
+				const rewrite = response.agentCommandGuard;
+				if (rewrite?.rewriteCommand && rewrite.scriptPath) {
+					resolve({ rewrite: { command: rewrite.rewriteCommand, scriptPath: rewrite.scriptPath } });
+					return;
+				}
+				resolve({ reason: "Protective hook returned an unexpected response" });
 			} catch {
-				resolve("Protective hook returned invalid JSON");
+				resolve({ reason: "Protective hook returned invalid JSON" });
 			}
 		});
 
@@ -89,11 +103,34 @@ function inspectCommand(command: string, hookPath: string, cwd: string): Promise
 
 export function createPiExtension(hookPath = defaultHookPath): ExtensionFactory {
 	return (pi: ExtensionAPI) => {
+		const stagedScripts = new Map<string, string>();
+
 		pi.on("tool_call", async (event, ctx) => {
 			if (!isToolCallEventType("bash", event)) return undefined;
 
-			const reason = await inspectCommand(event.input.command, hookPath, ctx.cwd);
-			return reason ? { block: true, reason } : undefined;
+			const result = await inspectCommand(event.input.command, hookPath, ctx.cwd);
+			if (result.reason) return { block: true, reason: result.reason };
+			if (result.rewrite) {
+				event.input.command = result.rewrite.command;
+				stagedScripts.set(event.toolCallId, result.rewrite.scriptPath);
+			}
+			return undefined;
+		});
+
+		pi.on("tool_result", (event) => {
+			if (!isBashToolResult(event)) return undefined;
+			const scriptPath = stagedScripts.get(event.toolCallId);
+			if (!scriptPath) return undefined;
+			stagedScripts.delete(event.toolCallId);
+			return {
+				content: [
+					...event.content,
+					{
+						type: "text",
+						text: `Guard saved and ran this script: ${scriptPath}. Continue working with this file (read or edit it directly); do not recreate the code inline.`,
+					},
+				],
+			};
 		});
 	};
 }

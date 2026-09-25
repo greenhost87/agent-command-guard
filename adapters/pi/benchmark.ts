@@ -11,7 +11,7 @@ const hookPath = join(fileURLToPath(new URL("../..", import.meta.url)), "build/a
 const cases = [
 	{ name: "allowed_simple_shell", command: "true", expectBlock: false },
 	{ name: "allowed_typical_shell", command: "sed -n '1,120p' /tmp/example.txt", expectBlock: false },
-	{ name: "denied_node_eval", command: `node -e "console.log(1)"`, expectBlock: true },
+	{ name: "staged_node_eval", command: `node -e "console.log(1)"`, expectBlock: true, expectPiBlock: false },
 ] as const;
 
 type Stats = {
@@ -147,8 +147,9 @@ try {
 				const started = performance.now();
 				const result = await emitBash(runner, item.command);
 				const blocked = result?.block === true;
-				if (blocked !== item.expectBlock) {
-					throw new Error(`${item.name} pi_full: expected block=${item.expectBlock}, got ${JSON.stringify(result)}`);
+				const expectBlock = item.expectPiBlock ?? item.expectBlock;
+				if (blocked !== expectBlock) {
+					throw new Error(`${item.name} pi_full: expected block=${expectBlock}, got ${JSON.stringify(result)}`);
 				}
 				return performance.now() - started;
 			},

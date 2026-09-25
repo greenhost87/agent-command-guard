@@ -50,16 +50,36 @@ describe("Pi adapter production path", () => {
 		expect(result).toBeUndefined();
 	});
 
-	it("blocks inline bash, saves its code, and forwards the file path", async () => {
-		const result = await emitBash(runner, deniedCommand);
-		expect(result?.block).toBe(true);
-		expect(result?.reason).toContain("Blocked inline interpreter code");
-		expect(result?.reason).not.toContain("console.log(1)");
-		const relative = result?.reason?.match(/\.codex\/tmp-scripts\/inline-[0-9a-f]{32}\.js/)?.[0];
+	it("runs inline bash from a staged file and tells the agent to keep working with it", async () => {
+		const event = {
+			type: "tool_call" as const,
+			toolCallId: "inline-call",
+			toolName: "bash" as const,
+			input: { command: deniedCommand },
+		};
+		const result = await runner.emitToolCall(event);
+		expect(result).toBeUndefined();
+		const relative = event.input.command.match(/\.codex\/tmp-scripts\/inline-[0-9a-f]{32}\.js/)?.[0];
 		expect(relative).toBeDefined();
+		expect(event.input.command).toBe(`node '${relative}'`);
 		const file = join(root, relative!);
 		expect(await readFile(file, "utf8")).toBe("console.log(1)");
 		expect((await stat(file)).mode & 0o777).toBe(0o600);
+
+		const resultEvent = {
+			type: "tool_result" as const,
+			toolCallId: "inline-call",
+			toolName: "bash" as const,
+			input: event.input,
+			content: [{ type: "text" as const, text: "1" }],
+			isError: false,
+			details: undefined,
+		};
+		const annotated = await runner.emitToolResult(resultEvent);
+		expect(annotated?.content?.at(-1)).toEqual({
+			type: "text",
+			text: `Guard saved and ran this script: ${relative}. Continue working with this file (read or edit it directly); do not recreate the code inline.`,
+		});
 	});
 
 	it("ignores non-bash tool calls", async () => {

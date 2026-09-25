@@ -31,6 +31,15 @@ func deny(commandText, reason string) {
 	denyMessage(denialMessage(commandText, reason))
 }
 
+func allowPiCommandRewrite(command, scriptPath string) {
+	encoded := []byte(`{"agentCommandGuard":{"rewriteCommand":`)
+	encoded = appendJSONString(encoded, command)
+	encoded = append(encoded, `,"scriptPath":`...)
+	encoded = appendJSONString(encoded, scriptPath)
+	encoded = append(encoded, "}}\n"...)
+	_, _ = os.Stdout.Write(encoded)
+}
+
 func denyMessage(message string) {
 	encoded := make([]byte, 0, len(message)+180)
 	encoded = append(encoded, `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":`...)
@@ -92,6 +101,15 @@ func main() {
 
 	integration := resolveIntegration(false)
 	if reason != "" {
+		if shellTool && integration == "pi" && (reason == inlineInterpreterReason || reason == stdinInterpreterReason) {
+			if stagedPath := stageInlineScript(commandText, data.Cwd); stagedPath != "" {
+				if rewritten, ok := commandForStagedScript(commandText, stagedPath); ok && evaluateShellCommandInCwd(rewritten, data.Cwd) == "" {
+					allowPiCommandRewrite(rewritten, stagedPath)
+					logHookDecision(body, integration, true)
+					return
+				}
+			}
+		}
 		if shellTool {
 			denyMessage(shellDenialMessage(commandText, data.Cwd, reason))
 		} else {

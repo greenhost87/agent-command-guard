@@ -298,6 +298,45 @@ func stageInlineScript(command, cwd string) string {
 	return filepath.ToSlash(filepath.Join(scriptDir, filename))
 }
 
+func commandForStagedScript(command, scriptPath string) (string, bool) {
+	words, valid := literalWords(command)
+	var executionFlags []string
+	if valid {
+		if _, _, ok := extractInlineScript(command); !ok {
+			return "", false
+		}
+	} else {
+		if _, _, ok := extractStdinHeredoc(command); !ok {
+			return "", false
+		}
+		lines := strings.SplitN(command, "\n", 2)
+		words = strings.Fields(strings.TrimSuffix(lines[0], "\r"))
+	}
+	prefix := ""
+	if len(words) > 0 && words[0] == "rtk" {
+		prefix = words[0] + " "
+		words = words[1:]
+		if len(words) > 0 && strings.EqualFold(words[0], "proxy") {
+			prefix += words[0] + " "
+			words = words[1:]
+		}
+	}
+	if len(words) == 0 || words[0] != commandNameToken(words[0]) {
+		return "", false
+	}
+	interpreter := words[0]
+	if valid && isNodeInterpreter(interpreter) {
+		args := words[1:]
+		if len(args) == 4 && args[0] == "--input-type" && args[1] == "module" {
+			executionFlags = args[:2]
+		} else if len(args) == 3 && args[0] == "--input-type=module" {
+			executionFlags = args[:1]
+		}
+	}
+	executionArgs := append(executionFlags, "'"+scriptPath+"'")
+	return prefix + interpreter + " " + strings.Join(executionArgs, " "), true
+}
+
 func shellDenialMessage(command, cwd, reason string) string {
 	if reason == inlineInterpreterReason || reason == stdinInterpreterReason {
 		if path := stageInlineScript(command, cwd); path != "" {

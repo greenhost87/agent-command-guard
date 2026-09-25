@@ -121,6 +121,52 @@ func TestCodexStagesInlineScriptAndPreservesDenial(t *testing.T) {
 	}
 }
 
+func TestPiRewritesAllowedInlineScriptToStagedFile(t *testing.T) {
+	cwd := stagingWorkspace(t)
+	command := `node -e 'console.log(1)'`
+	body, err := json.Marshal(map[string]any{"tool_name": "Bash", "tool_input": map[string]string{"command": command}, "cwd": cwd})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, exitCode := runGuardWithLog(t, body, "ACG_INTEGRATION=pi")
+	if exitCode != 0 {
+		t.Fatalf("exit code = %d", exitCode)
+	}
+	var response struct {
+		AgentCommandGuard struct {
+			RewriteCommand string `json:"rewriteCommand"`
+			ScriptPath     string `json:"scriptPath"`
+		} `json:"agentCommandGuard"`
+	}
+	if err := json.Unmarshal(out, &response); err != nil {
+		t.Fatalf("invalid rewrite response %q: %v", out, err)
+	}
+	rewrite := response.AgentCommandGuard
+	if rewrite.ScriptPath == "" || rewrite.RewriteCommand != "node '"+rewrite.ScriptPath+"'" {
+		t.Fatalf("unexpected rewrite: %#v", rewrite)
+	}
+	data, err := os.ReadFile(filepath.Join(cwd, rewrite.ScriptPath))
+	if err != nil || string(data) != "console.log(1)" {
+		t.Fatalf("staged script = %q, err = %v", data, err)
+	}
+}
+
+func TestCommandForStagedScriptPreservesInterpreterOptions(t *testing.T) {
+	const path = ".codex/tmp-scripts/inline-example.js"
+	for _, tc := range []struct {
+		command, want string
+	}{
+		{command: `node --input-type=module -e 'console.log(1)'`, want: `node --input-type=module '.codex/tmp-scripts/inline-example.js'`},
+		{command: `rtk proxy bun -e 'console.log(1)'`, want: `rtk proxy bun '.codex/tmp-scripts/inline-example.js'`},
+		{command: "python3 - <<'PY'\nprint(1)\nPY", want: `python3 '.codex/tmp-scripts/inline-example.js'`},
+	} {
+		got, ok := commandForStagedScript(tc.command, path)
+		if !ok || got != tc.want {
+			t.Errorf("commandForStagedScript(%q) = %q, %v; want %q", tc.command, got, ok, tc.want)
+		}
+	}
+}
+
 func TestPythonHeredocIsStagedAndStillDenied(t *testing.T) {
 	cwd := stagingWorkspace(t)
 	command := "python3 - <<'PY'\nfrom pathlib import Path\nprint(Path.cwd())\nPY"
