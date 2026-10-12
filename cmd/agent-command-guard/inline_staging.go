@@ -198,9 +198,7 @@ func extractStdinHeredoc(command string) (string, string, bool) {
 		return "", "", false
 	}
 	header := lines[0]
-	if strings.HasSuffix(header, "\r") {
-		header = strings.TrimSuffix(header, "\r")
-	}
+	header = strings.TrimSuffix(header, "\r")
 	fields := strings.Fields(header)
 	fields, valid := unwrapLiteralInterpreter(fields)
 	if !valid || len(fields) < 2 || len(fields) > 3 {
@@ -238,11 +236,6 @@ func extractStdinHeredoc(command string) (string, string, bool) {
 		}
 	}
 	return strings.Join(lines[1:end], "\n") + "\n", extension, true
-}
-
-func extractPythonHeredoc(command string) (string, bool) {
-	code, extension, ok := extractStdinHeredoc(command)
-	return code, ok && extension == ".py"
 }
 
 func stageInlineScript(command, cwd string) string {

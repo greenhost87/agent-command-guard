@@ -30,7 +30,7 @@ jobs:
       - name: lint
         uses: golangci/golangci-lint-action@v8
         with:
-          version: v2.13
+          version: v2.14
           args: ./...
       - name: vulncheck
         run: |

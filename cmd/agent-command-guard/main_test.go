@@ -1,4 +1,5 @@
 package main
+
 import (
 	"bytes"
 	"encoding/json"
@@ -11,12 +12,14 @@ import (
 	"sync"
 	"testing"
 )
+
 var (
 	guardBinaryOnce   sync.Once
 	guardBinaryPath   string
 	guardBinaryErr    error
 	guardBinaryOutput string
 )
+
 func builtGuardBinary(t *testing.T) string {
 	t.Helper()
 	guardBinaryOnce.Do(func() {
